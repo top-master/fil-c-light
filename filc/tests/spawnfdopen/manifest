@@ -1,0 +1,4 @@
+return:
+  success
+output-includes:
+  - "SpawnFdOpen: Hello from FDOP_OPEN"

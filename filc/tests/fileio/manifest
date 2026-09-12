@@ -1,0 +1,5 @@
+return:
+  success
+output-includes:
+  - "read the zsys way: Hello, world!"
+  - "read the fread way: Hello, world!"

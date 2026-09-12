@@ -1,0 +1,8 @@
+# It's also OK if this test reports a panic at runtime, but currently, the failure mode is link
+# failure.
+
+return:
+  linkFailure
+
+# COSMO: the cosmo link resolves the mismatched COMDAT hidden functions by position instead of failing the link (the musl flavor fails here); the mismatch check can not be exercised in this flavor yet.
+unsupportedOnCOSMO: true

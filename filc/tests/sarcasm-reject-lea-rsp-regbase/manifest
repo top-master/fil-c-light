@@ -1,0 +1,6 @@
+return:
+  compileFailure
+only-on-platform:
+  x86_64
+output-includes:
+  - "reject-lea-rsp-regbase-x86.s:17:"

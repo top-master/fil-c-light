@@ -1,0 +1,7 @@
+return:
+  success
+output-excludes:
+  - "filc safety error"
+  - "alignment requirement of 4 bytes not met"
+output-includes:
+  - "x = 42"

@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "YES"
+output-excludes:
+  - filc safety error

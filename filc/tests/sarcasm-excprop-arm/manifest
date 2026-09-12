@@ -1,0 +1,7 @@
+return:
+  success
+only-on-platform:
+  aarch64
+output-includes:
+  - "21"
+  - "caught 42"

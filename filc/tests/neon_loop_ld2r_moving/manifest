@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon loop ld2r moving test passed!"
+only-on-platform:
+  aarch64

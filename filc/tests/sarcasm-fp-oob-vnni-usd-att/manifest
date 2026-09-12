@@ -1,0 +1,13 @@
+return:
+  failure
+only-on-platform:
+  x86_64
+needsAVX512:
+  true
+output-includes:
+  - filc safety error
+  - cannot read 32 bytes
+
+# Some versions of GNU assembler do not support vpdpwusd
+skip:
+  true

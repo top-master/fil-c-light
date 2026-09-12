@@ -1,0 +1,10 @@
+return:
+  success
+only-on-platform:
+  x86_64
+needsAVX512:
+  true
+output-includes:
+  - "zmm live ok"
+slow:
+  true

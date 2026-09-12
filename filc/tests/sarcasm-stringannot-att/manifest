@@ -1,0 +1,18 @@
+return:
+  success
+only-on-platform:
+  x86_64
+output-includes:
+  - "stringannot att ok 7"
+  - "a ;! b"
+  - "a #! b"
+  - "a //! b"
+  - "x ;! y #! z"
+  - "p //! q ;! r"
+  - "with .string ;! here"
+  - "trailing marker ;!"
+  - "#! at start ;! in middle //! at end"
+  - 'a \" ;! b'
+  - 'a \" #! b'
+  - 'a \" # b'
+  - 'a\\b ;! x'

@@ -1,0 +1,8 @@
+return:
+  failure
+output-includes:
+  - "filc safety error"
+only-on-platform:
+  aarch64
+optFlags:
+  "-march=armv8-a+sve"

@@ -1,0 +1,6 @@
+	.text
+	.globl	f
+	.type	f, @function
+f:                              ;! int(ptr
+	ret
+	.size	f, .-f

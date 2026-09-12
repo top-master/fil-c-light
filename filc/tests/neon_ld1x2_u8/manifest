@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld1x2 u8 test passed!"
+only-on-platform:
+  aarch64

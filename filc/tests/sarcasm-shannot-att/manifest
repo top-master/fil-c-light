@@ -1,0 +1,9 @@
+return:
+  success
+only-on-platform:
+  x86_64
+output-includes:
+  - "11 22 33"
+  - "a ;! b"
+  - "a #! b"
+  - "x ;! y #! z"

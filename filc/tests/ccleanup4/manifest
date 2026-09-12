@@ -1,0 +1,8 @@
+return:
+  success
+optFlags:
+  "-O2 -fexceptions"
+output-includes:
+  - "e = 1410"
+output-excludes:
+  - "in cleanup, x = 666"

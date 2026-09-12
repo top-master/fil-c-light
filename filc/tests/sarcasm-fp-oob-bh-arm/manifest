@@ -1,0 +1,7 @@
+return:
+  failure
+only-on-platform:
+  aarch64
+output-includes:
+  - "filc safety error"
+  - "cannot read 2 bytes when upper - ptr = 1"

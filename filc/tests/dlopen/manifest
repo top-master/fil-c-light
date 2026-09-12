@@ -1,0 +1,9 @@
+return:
+  success
+libraries:
+  libtest.so:
+    isBundle: true
+    files:
+      - library.c
+output-includes:
+  - "called foo."

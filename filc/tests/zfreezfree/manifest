@@ -1,0 +1,7 @@
+return:
+  failure
+output-excludes:
+  Nie dobrze
+output-includes:
+  - filc safety error
+  - cannot free special object

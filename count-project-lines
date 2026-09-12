@@ -1,0 +1,317 @@
+#!/usr/bin/env ruby
+#
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+# Counts lines of C/C++ code in projects/ and pizlix/ tarballs.
+
+require 'set'
+require 'tempfile'
+require 'tmpdir'
+
+# Extensions to count.
+EXTENSIONS = %w[
+  .h .c .hxx .hpp .cpp .C .cc .cxx .inc
+].to_set
+
+# Tarball extensions to look for in pizlix/.
+TARBALL_EXTS = %w[.tar.gz .tar.bz2 .tar.xz .tar]
+
+# Top-level directories under projects/ whose names start with any of these are excluded.
+EXCLUDED_DIR_PREFIXES = %w[yolo]
+
+# Recursively collect matching regular files under `root`.
+# Symlinks are ignored entirely to avoid loops and double-counting.
+# Hard links are deduplicated by (device, inode).
+# Directories named exactly `extracted-source` are skipped at any depth.
+# `top_level_excluded_prefixes` is applied only to immediate children of `root`.
+# Returns an array of file paths.
+def collect_files(root, extensions, top_level_excluded_prefixes = [])
+  files = []
+  seen_inodes = Set.new
+  dirs = [root]
+
+  while !dirs.empty?
+    dir = dirs.shift
+
+    begin
+      children = Dir.children(dir)
+    rescue => e
+      $stderr.puts "Warning: cannot read directory #{dir}: #{e.message}"
+      next
+    end
+
+    children.each do |name|
+      path = File.join(dir, name)
+
+      begin
+        stat = File.lstat(path)
+      rescue => e
+        $stderr.puts "Warning: cannot stat #{path}: #{e.message}"
+        next
+      end
+
+      # Skip symlinks (files and directories) to handle links safely and
+      # avoid double-counting.
+      next if stat.symlink?
+
+      if stat.directory?
+        # Exclude top-level directories matching configured prefixes.
+        if dir == root && top_level_excluded_prefixes.any? { |prefix| name.start_with?(prefix) }
+          next
+        end
+        # Exclude extracted-source trees anywhere.
+        next if name == "extracted-source"
+        dirs << path
+      elsif stat.file?
+        next unless extensions.include?(File.extname(name))
+
+        inode_key = [stat.dev, stat.ino]
+        next if seen_inodes.include?(inode_key)
+        seen_inodes.add(inode_key)
+        files << path
+      end
+    end
+  end
+
+  files
+end
+
+# Count lines in a list of files using GNU wc -l for speed.
+# Files are passed via a NUL-separated list to handle arbitrary names.
+def count_lines(files)
+  return 0 if files.empty?
+
+  total = 0
+  Tempfile.create('count-project-lines-filelist') do |list|
+    files.each do |f|
+      list.write(f)
+      list.write("\0")
+    end
+    list.flush
+    list.close
+
+    output = `wc -l --files0-from=#{list.path} 2>&1`
+    unless $?.success?
+      $stderr.puts output
+      raise "wc failed with exit status #{$?.exitstatus}"
+    end
+    output.each_line do |line|
+      # Typical line: "    123 /path/to/file"
+      # Final line:  "  12345 total"
+      if line =~ /^\s*(\d+)\s+(.+?)\s*$/
+        count = $1.to_i
+        filename = $2
+        next if filename == "total"
+        total += count
+      end
+    end
+  end
+
+  total
+end
+
+# Strip the compression extension from a tarball name.
+def tarball_base_name(name)
+  name.sub(/\.tar\.(gz|bz2|xz)$|\.tar$/, '')
+end
+
+# Common packaging qualifiers stripped before version detection.  These are
+# removed only as a whole trailing component, preceded by a separator or the
+# start of the name, so names like "libdev" are left untouched.
+QUALIFIER_RE = /(?:^|[-_.])(?:src|html|autoconf|orig|docs|dev)$/
+
+# Version-like suffix pattern used to compute project stems.
+#
+# Matches a trailing component that starts with a separator (- or _) and then
+# looks like a version number, date, or short hex hash, optionally followed by
+# additional separated qualifiers (e.g., -dev, -src, .orig, -20240720).
+VERSION_SUFFIX_RE = /[-_](?:\d+(?:\.\d+)*[a-zA-Z]?\d*|[a-f0-9]{7,})(?:[-+~.](?:\d+(?:\.\d+)*[a-zA-Z]?\d*|[a-zA-Z]+|[a-f0-9]{7,}))*$/
+
+# Embedded trailing version-like sequence.
+#
+# Matches a suffix that transitions directly from a letter to a version-like
+# run of digits (and optional dots/letters).  To avoid stripping trailing
+# digits that are part of a project name, the run must start with either:
+#   * at least two digits (e.g., unzip60 -> unzip, zip30 -> zip), or
+#   * a single digit immediately followed by a dot (e.g., tcl8.6.14 -> tcl).
+#
+# This preserves names like libxml2, bzip2, bzip3, seatd, and quickjs where a
+# lone trailing digit is part of the project name.  It can still over-strip
+# names that end in two or more digits, such as libX11 -> libX; no project
+# directory currently collides with that reduced form.
+EMBEDDED_VERSION_RE = /(?<=[a-zA-Z])(?:\d{2,}[a-zA-Z]?\d*|\d\.\d+(?:\.\d+)*[a-zA-Z]?\d*)$/
+
+# Compute the project "stem" of a directory or tarball base name by stripping
+# packaging qualifiers, separator-led version-like suffixes, and embedded
+# trailing version-like sequences.  Iterative so compound suffixes such as
+# "-autoconf-3460100", "8.6.14-src", or "-6.5-20240720" are fully removed.
+def compute_stem(name)
+  stem = name.downcase
+  loop do
+    new_stem = stem.sub(QUALIFIER_RE, '')
+    new_stem = new_stem.sub(VERSION_SUFFIX_RE, '')
+    new_stem = new_stem.sub(EMBEDDED_VERSION_RE, '')
+    break if new_stem == stem || new_stem.empty?
+    stem = new_stem
+  end
+  stem
+end
+
+def main
+  projects_dir = File.expand_path("projects", __dir__)
+  pizlix_dir = File.expand_path("pizlix", __dir__)
+
+  unless File.directory?(projects_dir)
+    $stderr.puts "Error: #{projects_dir}/ directory not found"
+    exit 1
+  end
+  unless File.directory?(pizlix_dir)
+    $stderr.puts "Error: #{pizlix_dir}/ directory not found"
+    exit 1
+  end
+
+  # Duplicate-detection heuristic:
+  #
+  # Project directories under projects/ and tarball base names under pizlix/
+  # are reduced to a "stem" by stripping:
+  #
+  #   * common packaging qualifiers (-src, -html, -autoconf, .orig, -docs,
+  #     -dev);
+  #   * separator-led version/date/hash-like suffixes (see VERSION_SUFFIX_RE
+  #     below), e.g. -1.2.3, _20240720;
+  #   * embedded trailing version-like sequences that transition directly from
+  #     a letter to at least two digits or to a digit followed by a dot (see
+  #     EMBEDDED_VERSION_RE below), e.g. tcl8.6.14 -> tcl, unzip60 -> unzip.
+  #
+  # If a tarball's stem matches the stem of any project directory, the tarball
+  # is considered a different version of the same project and is skipped.
+  # This avoids counting the same project twice when it is already present
+  # unpacked in projects/.
+  #
+  # Caveats and edge cases:
+  #   * Stem matching is exact after suffix stripping.  libfoo and libfoobar
+  #     are distinct stems, so they are never treated as duplicates of each
+  #     other.
+  #   * A lone trailing digit is preserved, so libxml2, bzip2, bzip3, seatd,
+  #     and quickjs remain unchanged.  However, names ending in two or more
+  #     digits may be over-stripped (e.g., libX11 -> libX).  No project
+  #     directory currently collides with such a reduced form.
+  #   * Conversely, a project directory named exactly "libfoo" will suppress
+  #     counting of any tarball whose stem reduces to "libfoo" (e.g.
+  #     libfoo-1.2.3.tar.gz or libfoo2.tar.gz), even if the tarball contains a
+  #     different version.
+  #
+  # Enumerate non-excluded top-level project directories and compute their stems.
+  project_dirs = Dir.children(projects_dir).select do |name|
+    path = File.join(projects_dir, name)
+    File.directory?(path) && !name.start_with?(*EXCLUDED_DIR_PREFIXES)
+  end.sort
+
+  project_stems = {}
+  project_dirs.each do |name|
+    stem = compute_stem(name)
+    project_stems[stem] ||= []
+    project_stems[stem] << name
+  end
+
+  puts "Counting lines in #{projects_dir}/ ..."
+  project_files = collect_files(projects_dir, EXTENSIONS, EXCLUDED_DIR_PREFIXES)
+  project_lines = count_lines(project_files)
+  puts "  #{project_files.size} files, #{project_lines} lines"
+
+  puts ""
+  puts "Processing tarballs in #{pizlix_dir}/ ..."
+
+  tarball_names = Dir.children(pizlix_dir).select do |name|
+    TARBALL_EXTS.any? { |ext| name.end_with?(ext) }
+  end.sort
+
+  counted = []
+  skipped = []
+  tarball_lines = 0
+
+  tarball_names.each do |name|
+    path = File.join(pizlix_dir, name)
+    base = tarball_base_name(name)
+
+    if base.start_with?("gcc") || base.start_with?("lfs")
+      skipped << [name, "basename matches gcc/lfs tarball skip pattern"]
+      next
+    end
+
+    stem = compute_stem(base)
+    if project_stems.key?(stem)
+      matches = project_stems[stem].join(", ")
+      skipped << [name, "matches project directory stem #{stem} (#{matches})"]
+      next
+    end
+
+    Dir.mktmpdir("count-project-lines-") do |tmpdir|
+      result = system("tar", "--no-same-owner", "-xf", path, "-C", tmpdir)
+      unless result
+        $stderr.puts "Warning: failed to extract #{name}"
+        skipped << [name, "extraction failed"]
+        next
+      end
+
+      files = collect_files(tmpdir, EXTENSIONS, []) # no yolo exclusion in tarballs
+      lines = count_lines(files)
+      tarball_lines += lines
+      counted << [name, lines, files.size]
+      puts "  #{name}: #{files.size} files, #{lines} lines"
+    end
+  end
+
+  total_lines = project_lines + tarball_lines
+
+  puts ""
+  puts "=" * 60
+  puts "Summary"
+  puts "=" * 60
+  puts "Projects lines:  #{project_lines.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse}"
+  puts "Tarball lines:   #{tarball_lines.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse}"
+  puts "Total lines:     #{total_lines.to_s.reverse.gsub(/(\d{3})(?=\d)/, '\\1,').reverse}"
+  puts ""
+  puts "Counted tarballs (#{counted.size}):"
+  if counted.empty?
+    puts "  (none)"
+  else
+    counted.each do |name, lines, files|
+      puts "  + #{name}: #{files} files, #{lines} lines"
+    end
+  end
+  puts ""
+  puts "Skipped tarballs (#{skipped.size}):"
+  if skipped.empty?
+    puts "  (none)"
+  else
+    skipped.each do |name, reason|
+      puts "  - #{name}: #{reason}"
+    end
+  end
+
+  exit 0
+end
+
+main

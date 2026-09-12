@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsRNG:
+  true
+optFlags:
+  "-march=armv8.5-a+rng"

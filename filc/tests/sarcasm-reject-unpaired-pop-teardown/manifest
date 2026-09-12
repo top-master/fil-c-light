@@ -1,0 +1,6 @@
+return:
+  compileFailure
+only-on-platform:
+  x86_64
+output-includes:
+  - "reject-unpaired-pop-teardown-x86.s:11:"

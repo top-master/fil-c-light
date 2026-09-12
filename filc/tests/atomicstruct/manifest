@@ -1,0 +1,8 @@
+return:
+  success
+output-includes:
+  - "a = 1, b = 2"
+  - "s2 = { 42, 6.25, \"hello world\", 1000000000000 }"
+  - "success"
+output-excludes:
+  - "FAIL"

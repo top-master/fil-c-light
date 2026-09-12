@@ -1,0 +1,16 @@
+#include <stdfil.h>
+
+typedef char v16qi __attribute__((vector_size(16)));
+
+int main(void)
+{
+    v16qi a = { 1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11, 12, 13, 14, 15, 16 };
+    v16qi b = { 1, 2, 3, 4, 5, 6, 7, 8,
+                9, 10, 11, 12, 13, 14, 15, 16 };
+    int la = 5, lb = 2;
+    /* PCMPESTRI writes ECX, but ECX is not declared as an output or clobber. */
+    asm volatile("pcmpestri $0x00, %2, %1"
+                 : : "x"(a), "x"(b), "a"(la), "d"(lb) : "cc");
+    return 0;
+}

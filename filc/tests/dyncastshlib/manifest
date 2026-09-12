@@ -1,0 +1,23 @@
+return:
+  success
+libraries:
+  libbase:
+    isBundle: false
+    files:
+      - libbase.cpp
+  libcaller:
+    isBundle: false
+    files:
+      - libcaller.cpp
+    extraLinkerArgs:
+      "-Lfilc/test-output/dyncastshlib -lbase"
+optFlags:
+  "-O2 -fPIC -fvisibility=hidden"
+extraLinkerArgs:
+  "-Lfilc/test-output/dyncastshlib -lbase -lcaller"
+extraLDPath:
+  "filc/test-output/dyncastshlib"
+output-includes:
+  - "same-lib SUCCESS"
+  - "diff-lib FAILED"
+

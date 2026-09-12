@@ -1,0 +1,10 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsLSE:
+  true
+output-includes:
+  - "cross-object swp ok"
+  - "int swp ok"
+  - "aptr rmw arm ok"

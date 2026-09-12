@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsSVE:
+  true
+optFlags:
+  "-march=armv8-a+sve"

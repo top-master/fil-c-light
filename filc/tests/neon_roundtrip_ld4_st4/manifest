@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon roundtrip ld4 st4 test passed!"
+only-on-platform:
+  aarch64

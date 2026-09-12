@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld1q u32 x3 test passed!"
+only-on-platform:
+  aarch64

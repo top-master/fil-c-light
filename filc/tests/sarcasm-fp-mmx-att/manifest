@@ -1,0 +1,6 @@
+return:
+  success
+only-on-platform:
+  x86_64
+output-includes:
+  - "mmx 25769803780 3377742670725126"

@@ -1,0 +1,4 @@
+# DEFAULT			Earliest symbol set
+# ---------------		------------------------------
+DEFAULT			GLIBC_2.2.5
+ld=ld-fil1-x86_64.so

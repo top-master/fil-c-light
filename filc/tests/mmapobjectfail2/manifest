@@ -1,0 +1,7 @@
+return:
+  success
+output-includes:
+  - "Got this far!"
+  - "x = 42"
+  - "y = hello"
+

@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld2q dup s16 exact test passed!"
+only-on-platform:
+  aarch64

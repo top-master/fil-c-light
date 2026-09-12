@@ -1,0 +1,9 @@
+#include <stdfil.h>
+
+int main(void)
+{
+    /* VZEROALL writes ALL of YMM0-YMM15, so every one must be clobbered.
+       Here only ymm0 is clobbered, which Fil-C must reject as a safety error. */
+    asm volatile("vzeroall" ::: "ymm0");
+    return 0;
+}

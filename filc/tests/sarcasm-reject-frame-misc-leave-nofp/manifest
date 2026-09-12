@@ -1,0 +1,6 @@
+return:
+  compileFailure
+only-on-platform:
+  x86_64
+output-includes:
+  - "reject-leave-nofp-x86.s:9:"

@@ -1,0 +1,7 @@
+return:
+  success
+only-on-platform:
+  x86_64
+output-includes:
+  - "indirect: 45"
+  - "direct: 10"

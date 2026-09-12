@@ -1,0 +1,9 @@
+return:
+
+  compileFailure
+
+only-on-platform:
+
+  aarch64
+output-includes:
+  - "reject.s:10:"

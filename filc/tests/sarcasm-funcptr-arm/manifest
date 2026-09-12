@@ -1,0 +1,7 @@
+return:
+  success
+only-on-platform:
+  aarch64
+output-includes:
+  - "indirect: 45"
+  - "direct: 10"

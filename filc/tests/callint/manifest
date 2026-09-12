@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  - spoko
+  - "cannot access pointer as function, object isn't even special"
+output-excludes:
+  kurcze

@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon roundtrip ld2 st2 test passed!"
+only-on-platform:
+  aarch64

@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  "main(swapcontext);func2(swapcontext);func1(swapcontext);filc safety error: cannot call swapcontext with from == to (from/to fiber context ="
+
+needsGLIBC:
+  true

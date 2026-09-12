@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon param ld2 test passed!"
+only-on-platform:
+  aarch64

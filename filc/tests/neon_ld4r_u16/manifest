@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld4r u16 test passed!"
+only-on-platform:
+  aarch64

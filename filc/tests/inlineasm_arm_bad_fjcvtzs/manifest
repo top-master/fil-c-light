@@ -1,0 +1,10 @@
+return:
+  failure
+output-includes:
+  - "filc safety error"
+only-on-platform:
+  aarch64
+needsJSCVT:
+  true
+optFlags:
+  "-march=armv8.3-a"

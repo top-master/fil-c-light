@@ -1,0 +1,8 @@
+return:
+  success
+output-includes:
+  - "Spawn1: Hello"
+  - "Spawn2: Hello"
+  - "Spawn3: /"
+  - "Spawn4: Hello"
+  - "Spawn5: <none>"

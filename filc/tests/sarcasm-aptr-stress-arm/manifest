@@ -1,0 +1,10 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsLSE:
+  true
+slow:
+  true
+output-includes:
+  - "aptr stress arm ok"

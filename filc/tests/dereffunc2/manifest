@@ -1,0 +1,9 @@
+return:
+  failure
+output-includes:
+  - filc safety error
+  - cannot write pointer to special object
+  - "special(function),global,readonly"
+output-excludes:
+  - blah
+  - bytes when upper - ptr

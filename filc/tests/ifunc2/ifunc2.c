@@ -1,0 +1,33 @@
+#include <stdfil.h>
+#include <stdbool.h>
+
+static bool did_resolve_foo = false;
+static void* ptr;
+
+static int my_foo(void)
+{
+    return 666;
+}
+
+static int (*resolve_foo(void))(void)
+{
+    zprintf("in resolve_foo\n");
+
+    zprintf("ptr = %p\n", ptr);
+
+    did_resolve_foo = true;
+    return my_foo;
+}
+
+int foo(void) __attribute__((ifunc("resolve_foo")));
+
+static void* ptr = foo;
+
+int main()
+{
+    ZASSERT(foo() == 666);
+    ZASSERT(did_resolve_foo);
+    zprintf("all good\n");
+    return 0;
+}
+

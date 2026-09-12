@@ -1,0 +1,7 @@
+return:
+  success
+output-includes:
+  - "check.p == &x: 1"
+  - "success"
+output-excludes:
+  - "FAIL"

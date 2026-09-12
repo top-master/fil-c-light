@@ -1,0 +1,6 @@
+return:
+  compileFailure
+only-on-platform:
+  aarch64
+slow:
+  true

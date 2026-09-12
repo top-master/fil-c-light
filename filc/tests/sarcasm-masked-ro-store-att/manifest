@@ -1,0 +1,8 @@
+return:
+  failure
+only-on-platform:
+  x86_64
+needsAVX512:
+  true
+output-includes:
+  - cannot write to read-only object

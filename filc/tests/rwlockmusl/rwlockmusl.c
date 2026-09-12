@@ -1,0 +1,32 @@
+#include <pthread.h>
+#include <stdio.h>
+#include <stdfil.h>
+
+int main(int argc, char** argv)
+{
+    pthread_rwlock_t rwlock;
+    ZASSERT(!pthread_rwlock_init(&rwlock, NULL));
+    ZASSERT(!pthread_rwlock_rdlock(&rwlock));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock));
+    ZASSERT(!pthread_rwlock_tryrdlock(&rwlock));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock));
+    ZASSERT(!pthread_rwlock_wrlock(&rwlock));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock));
+    ZASSERT(!pthread_rwlock_trywrlock(&rwlock));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock));
+    ZASSERT(!pthread_rwlock_destroy(&rwlock));
+
+    pthread_rwlock_t rwlock2 = PTHREAD_RWLOCK_INITIALIZER;
+    ZASSERT(!pthread_rwlock_rdlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_tryrdlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_wrlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_trywrlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_unlock(&rwlock2));
+    ZASSERT(!pthread_rwlock_destroy(&rwlock2));
+
+    printf("Wporzo\n");
+    return 0;
+}

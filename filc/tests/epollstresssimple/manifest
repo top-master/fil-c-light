@@ -1,0 +1,7 @@
+return:
+  success
+slow:
+  true
+
+# COSMO: cosmo doesn't expose epoll at all.
+unsupportedOnCOSMO: true

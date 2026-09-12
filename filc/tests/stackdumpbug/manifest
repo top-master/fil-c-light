@@ -1,0 +1,11 @@
+return:
+  failure
+needsGLIBC:
+  true
+output-includes:
+  - "filc safety error: cannot read pointer with ptr >= upper"
+  - "(stackdumpbug) filc/tests/stackdumpbug/stackdumpbug.c:46:30: definitely_switch"
+  - "(stackdumpbug) filc/tests/stackdumpbug/stackdumpbug.c:68:9: maybe_switch"
+  - "(stackdumpbug) filc/tests/stackdumpbug/stackdumpbug.c:82:5: add_node"
+  - "(stackdumpbug) filc/tests/stackdumpbug/stackdumpbug.c:91:9: build"
+  - "(stackdumpbug) filc/tests/stackdumpbug/stackdumpbug.c:128:5: run"

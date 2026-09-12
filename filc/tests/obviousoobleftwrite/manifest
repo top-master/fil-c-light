@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  - "filc safety error"
+output-excludes:
+  - "thingy"
+  - "got here"

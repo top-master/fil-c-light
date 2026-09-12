@@ -1,0 +1,22 @@
+#include <stdfil.h>
+#include <immintrin.h>
+#include <string.h>
+
+__attribute__((target("avx"))) int main()
+{
+    float* buf = zgc_aligned_alloc(16, 16);
+    buf[0] = 1.;
+    buf[1] = 2.;
+    buf[2] = 3.;
+    buf[3] = 4.;
+    __m128 result = _mm_loadu_ps(buf);
+    memset(buf, 0, 16);
+    _mm_maskstore_ps(buf, _mm_set_epi32(0, 0x80000000, 0, 0x80000000), result);
+    zprintf("buf = %f, %f, %f, %f\n", buf[0], buf[1], buf[2], buf[3]);
+    ZASSERT(buf[0] == 1.);
+    ZASSERT(buf[1] == 0.);
+    ZASSERT(buf[2] == 3.);
+    ZASSERT(buf[3] == 0.);
+    return 0;
+}
+

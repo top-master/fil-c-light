@@ -1,0 +1,7 @@
+return:
+  success
+output-includes:
+  - "g = { 555, 666 }"
+  - "success"
+output-excludes:
+  - "FAIL"

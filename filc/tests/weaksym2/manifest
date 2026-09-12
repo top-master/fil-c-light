@@ -1,0 +1,11 @@
+return:
+  success
+output-includes:
+  - "seem to have foo"
+  - "in foo"
+  - "seem to have bar"
+  - "bar = 666"
+  - "seem to have baz"
+  - "baz = 42"
+
+

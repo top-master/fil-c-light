@@ -1,0 +1,6 @@
+return:
+  compileFailure
+only-on-platform:
+  aarch64
+output-includes:
+  - "badptr-ldr-xzr.s:9:"

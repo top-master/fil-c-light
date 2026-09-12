@@ -1,0 +1,8 @@
+return:
+  success
+output-includes:
+  - "old = { 1, 1.5, \"first\", 111 }"
+  - "cur = { 2, 2.5, \"second\", 222 }"
+  - "success"
+output-excludes:
+  - "FAIL"

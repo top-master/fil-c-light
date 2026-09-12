@@ -1,0 +1,17 @@
+return:
+  success
+only-on-platform:
+  aarch64
+libraries:
+  libfpasm:
+    isBundle: false
+    files:
+      - ext.s
+    extraLinkerArgs:
+      "--version-script=filc/tests/sarcasm-fp-asmcall-arm/ver.ld"
+extraLinkerArgs:
+  "-Lfilc/test-output/sarcasm-fp-asmcall-arm -lfpasm"
+extraLDPath:
+  "filc/test-output/sarcasm-fp-asmcall-arm"
+output-includes:
+  - "fp-asmcall ok"

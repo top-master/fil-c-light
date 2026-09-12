@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  "SUCCESS"
+optFlags:
+  "-fexceptions -O2"

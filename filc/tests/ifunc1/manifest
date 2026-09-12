@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "in resolve_foo"
+  - "in resolve_bar"
+  - "all good"

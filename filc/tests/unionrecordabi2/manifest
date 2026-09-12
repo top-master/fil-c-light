@@ -1,0 +1,6 @@
+FIXME: This fails right now because of issue #330.
+return:
+  success
+output-includes:
+  - "42 42 42"
+

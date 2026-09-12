@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "bmi2 shift ok"
+only-on-platform:
+  x86_64

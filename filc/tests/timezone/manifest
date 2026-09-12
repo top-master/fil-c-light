@@ -1,0 +1,6 @@
+return:
+  success
+optFlags:
+  "-O2 -std=c++23 -fexperimental-library"
+extraLinkerArgs:
+  "-fexperimental-library"

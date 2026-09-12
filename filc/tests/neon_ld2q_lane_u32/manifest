@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld2q lane u32 test passed!"
+only-on-platform:
+  aarch64

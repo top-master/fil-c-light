@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  "cleanup_foo(666);cleanup_bar(1410);"
+optFlags:
+  "-fexceptions -O2"

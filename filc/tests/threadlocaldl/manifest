@@ -1,0 +1,9 @@
+return:
+  success
+libraries:
+  libbundle.so:
+    isBundle: true
+    files:
+      - bundle.c
+optFlags:
+  "-O2 -fPIC"
