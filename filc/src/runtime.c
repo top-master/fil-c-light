@@ -662,6 +662,10 @@ long zsys_syscall(long n, ...)
         callee = zsys_inotify_rm_watch;
         break;
 
+    case SYS_sigaltstack:
+        callee = zsys_sigaltstack;
+        break;
+
 	/* FIXME: Implement more syscalls! */
 
     default:
