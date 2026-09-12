@@ -1,0 +1,9 @@
+return:
+  success
+output-includes:
+  - "(1) x = 42"
+  - "(1) y = 666"
+  - "(2) x = 35"
+  - "(2) y = 36"
+  - "(thr) x = 555"
+

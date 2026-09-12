@@ -1,0 +1,7 @@
+return:
+  crash
+output-includes:
+  - "so far so good"
+output-excludes:
+  - "deluge panic"
+  - "fail"

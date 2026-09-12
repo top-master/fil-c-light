@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  "main(swapcontext);func2(swapcontext);func1(swapcontext);filc safety error: cannot call swapcontext to switch from a context unless it's running or makecontext hasn't been called yet"
+needsGLIBC:
+  true
+

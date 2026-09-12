@@ -1,0 +1,8 @@
+return:
+  success
+output-includes:
+  - "success path: ok = 1, cur.i = 20"
+  - "failure path: ok = 0, expected.i = 20"
+  - "success"
+output-excludes:
+  - "FAIL"

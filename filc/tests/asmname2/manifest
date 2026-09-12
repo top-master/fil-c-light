@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "in foo, x = 0"
+  - "in foo, x = 1"
+  

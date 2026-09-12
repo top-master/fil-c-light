@@ -1,0 +1,21 @@
+return:
+  success
+libraries:
+  libfoo.so:
+    isBundle: true
+    files:
+      - foo.cpp
+  libbar.so:
+    isBundle: true
+    files:
+      - bar.cpp
+  libbaz.so:
+    isBundle: true
+    files:
+      - baz.cpp
+    extraLinkerArgs:
+      "-Lfilc/test-output/exceptionshlib12 -lfoo"
+optFlags:
+  "-O2 -fPIC"
+extraLDPath:
+  "filc/test-output/exceptionshlib12"

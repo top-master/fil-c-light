@@ -1,0 +1,11 @@
+return:
+  crash
+output-includes:
+  - "Illegal instruction"
+output-excludes:
+  - "Segmentation fault"
+# Our expectation of "Illegal instruction" fails on arm.
+# FIXME: Should have some way to conditionalize output-includes directives (and probably other
+# directives) on what platform we're on.
+only-on-platform:
+  x86_64

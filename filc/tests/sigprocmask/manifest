@@ -1,0 +1,7 @@
+return:
+  crash
+output-includes:
+  - "Still here!"
+output-excludes:
+  - "deluge panic"
+  - "Oops I should be dead!"

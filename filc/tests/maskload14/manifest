@@ -1,0 +1,9 @@
+return:
+  success
+output-includes:
+  - "In here"
+  - "sum = 91.000000, 112.000000, 133.000000, 154.000000, 175.000000, 196.000000, 217.000000, 238.000000"
+optFlags:
+  "-O2 -g -mavx -mfma -mavx2"
+only-on-platform:
+  x86_64

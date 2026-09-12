@@ -1,0 +1,13 @@
+return:
+
+  failure
+
+only-on-platform:
+
+  aarch64
+
+output-includes:
+
+  - "filc safety error"
+
+  - "cannot write 2 bytes when upper - ptr = 1"

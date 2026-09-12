@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  "filc safety error: invalid stack_size in call to makecontext"
+needsGLIBC:
+  true
+  

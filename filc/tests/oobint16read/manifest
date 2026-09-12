@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  - "filc safety error"
+  - "cannot read 2 bytes when upper - ptr = 1"
+output-excludes:
+  - "value ="

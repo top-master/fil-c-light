@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld2 misaligned exact test passed!"
+only-on-platform:
+  aarch64

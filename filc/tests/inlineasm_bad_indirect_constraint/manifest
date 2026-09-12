@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "y = 42"
+only-on-platform:
+  x86_64

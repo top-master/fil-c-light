@@ -1,0 +1,7 @@
+return:
+  success
+output-includes:
+  - "did not find foo"
+  - "did not find bar"
+  - "did not find baz"
+

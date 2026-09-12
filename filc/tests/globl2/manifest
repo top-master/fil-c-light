@@ -1,0 +1,9 @@
+return:
+  success
+libraries:
+  libfoo:
+    isStatic: true
+    files:
+      - foo.c
+extraLinkerArgs:
+  "-Lfilc/test-output/globl2 -lfoo -rdynamic"

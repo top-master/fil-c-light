@@ -1,0 +1,573 @@
+#!/usr/bin/env ruby
+#
+# Copyright (c) 2024-2026 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+
+require 'pathname'
+require 'getoptlong'
+require 'shellwords'
+
+BASE_BENCHMARK_NAME = "PizBench9022"
+$benchmarkName = BASE_BENCHMARK_NAME
+
+$repeats = 10
+$filter = /./
+$plugins = []
+
+# Check if we have avx512
+raise unless system("clang -O3 -g -o filc/tests/has_avx512 filc/tests/has_avx512.c")
+system("filc/tests/has_avx512 > filc/tests/has_avx512.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasAVX512 = $?.exitstatus == 0
+
+# The fannkuch-redux, n-body, and spectralnorm benchmarks use x86_64 SIMD
+# intrinsics, so the filc/benchmarks Makefile only builds them on x86_64.
+# Mirror that here so that we only run benchmarks that were built.
+$hasX86SIMD = `uname -m`.chomp == "x86_64"
+
+GetoptLong.new(
+    [ '--repeat', '-r', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--filter', '-f', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--plugin', '-p', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--has-avx512', GetoptLong::REQUIRED_ARGUMENT ],
+).each {
+    | opt, arg |
+    case opt
+    when '--repeat'
+        $repeats = arg.to_i
+    when '--filter'
+        $filter = Regexp.new(arg)
+    when '--plugin'
+        $plugins << arg
+        $benchmarkName = BASE_BENCHMARK_NAME + "P"
+    when '--has-avx512'
+        if arg.downcase == "true"
+            $hasAVX512 = true
+        elsif arg.downcase == "false"
+            $hasAVX512 = false
+        else
+            raise "--has-avx needs 'true' or 'false' argument."
+        end
+    else
+        raise
+    end
+}
+
+if $hasX86SIMD
+    $benchmarkName += "-X86_64"
+end
+if $hasAVX512
+    $benchmarkName += "-AVX512"
+end
+
+def mysys(cmd)
+    $stderr.puts ">> #{cmd}"
+    raise "Bad exit status: #{$?}" unless system(cmd)
+end
+
+class Stats
+    attr_reader :data
+
+    def initialize
+        @data = []
+    end
+
+    def add(value)
+        @data << value.to_f
+    end
+
+    def mean
+        result = 0.0
+        data.each {
+            | value |
+            result += value
+        }
+        result / data.length
+    end
+
+    def stdDev
+        return Float::NAN if data.length <= 1
+        accumulator = 0.0
+        mean = self.mean
+        data.each {
+            | value |
+            accumulator += (value - mean) ** 2
+        }
+        Math.sqrt(accumulator / (data.length - 1.0))
+    end
+
+    def stdDevFraction
+        stdDev / mean
+    end
+
+    def stdDevPercent
+        100 * stdDevFraction
+    end
+
+    def stdErr
+        stdDev / Math.sqrt(data.length)
+    end
+
+    def stdErrFraction
+        stdErr / mean
+    end
+
+    def stdErrPercent
+        100 * stdErrFraction
+    end
+
+    def to_s
+        if data.length <= 1
+            "%.4f" % [mean]
+        else
+            "%.4f +- %.2f%%" % [mean, stdErrPercent]
+        end
+    end
+end
+
+def geoMean(statsArray)
+    n = statsArray[0].data.length
+    statsArray.each {
+        | stats |
+        raise unless stats.data.length == n
+    }
+    result = Stats.new
+    n.times {
+        | index |
+        accumulator = 1.0
+        statsArray.each {
+            | stats |
+            accumulator *= stats.data[index]
+        }
+        result.add(accumulator ** (1.0 / statsArray.length.to_f))
+    }
+    result
+end
+
+class Benchmark
+    attr_reader :cmd, :args, :validate, :results
+
+    def initialize(cmd, args, validate)
+        @cmd = Pathname.new(cmd)
+        @args = args
+        @validate = validate
+        @results = {}
+        raise if @cmd.absolute?
+    end
+
+    def resultsForPizfix(pizfix)
+        @results[pizfix] = Stats.new unless @results[pizfix]
+        @results[pizfix]
+    end
+
+    def to_s
+        "#{Shellwords.shellescape(cmd)} #{args}"
+    end
+end
+
+class Geomean
+    attr_reader :results
+    
+    def initialize
+        @results = {}
+        $pizfixes.each {
+            | pizfix |
+            stats = []
+            $benchmarks.each {
+                | benchmark |
+                stats << benchmark.resultsForPizfix(pizfix)
+            }
+            @results[pizfix] = geoMean(stats)
+        }
+    end
+
+    def resultsForPizfix(pizfix)
+        raise unless @results[pizfix]
+        @results[pizfix]
+    end
+
+    def to_s
+        "<geomean>"
+    end
+end
+
+class Pizfix
+    attr_reader :path
+
+    def initialize(path)
+        @path = Pathname.new(path).realpath
+        raise "pizfix #{path} does not exist" unless @path.directory?
+    end
+
+    def to_s
+        path.to_s
+    end
+end
+
+class Plan
+    attr_reader :benchmark, :pizfix
+    
+    def initialize(benchmark, pizfix)
+        @benchmark = benchmark
+        @pizfix = pizfix
+    end
+
+    def run
+        benchmarkOutput = Pathname.new("benchmarkOutput")
+        benchmarkOutput.mkpath
+        benchmarkOutput.rmtree
+        benchmarkOutput.mkpath
+
+        before = Time.now
+        mysys(Shellwords.shellescape(pizfix.path + benchmark.cmd) + " " + benchmark.args)
+        after = Time.now
+        $stderr.puts "-- That took #{after - before} sec."
+        benchmark.resultsForPizfix(pizfix).add(after - before)
+        benchmark.validate.each {
+            | cmd |
+            mysys(cmd)
+        }
+    end
+end
+
+$benchmarks = []
+
+$benchmarks << Benchmark.new(
+    "bin/openssl",
+    "aes-256-cbc -a -pbkdf2 -d -in benchmarkData/libcrypto.3.dylib.enc -out benchmarkOutput/libcrypto.3.dylib -k foobar",
+    [
+        "diff -q benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/xz",
+    "< benchmarkData/libpizlo.dylib > benchmarkOutput/libpizlo.dylib.xz",
+    [
+        "diff -q benchmarkOutput/libpizlo.dylib.xz benchmarkData/libpizlo.dylib.xz"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/xz",
+    "-d < benchmarkData/libcrypto.3.dylib.xz > benchmarkOutput/libcrypto.3.dylib",
+    [
+        "diff -q benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/cjpeg",
+    "< benchmarkData/Pizigani_1367_Chart_10MB.pnm > benchmarkOutput/Pizigani_1367_Chart_10MB.jpg",
+    [
+        "diff -n benchmarkOutput/Pizigani_1367_Chart_10MB.jpg benchmarkData/Pizigani_1367_Chart_10MB-2.jpg"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/djpeg",
+    "< benchmarkData/Pizigani_1367_Chart_10MB.jpg > benchmarkOutput/Pizigani_1367_Chart_10MB.pnm",
+    [
+        "diff -n benchmarkOutput/Pizigani_1367_Chart_10MB.pnm benchmarkData/Pizigani_1367_Chart_10MB.pnm"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/python3",
+    "benchmarkData/richards.py",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/python3",
+    "benchmarkData/nbody.py 5000",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/bzip2",
+    "< benchmarkData/libpizlo.dylib > benchmarkOutput/libpizlo.dylib.bz2",
+    [
+        "diff -n benchmarkOutput/libpizlo.dylib.bz2 benchmarkData/libpizlo.dylib.bz2"
+    ])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/richards", "", [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/stepanov_container", "", [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/pcre_benchmark",
+    "benchmarkData/input-text.txt",
+    [])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/deltablue", "", [])
+
+$benchmarks << Benchmark.new(
+    "bin/lua",
+    "benchmarkData/richards.lua",
+    [])
+
+$benchmarks << Benchmark.new(
+    "../projects/simdutf-5.5.0/build/benchmarks/benchmark",
+    "-F benchmarkData/simdutf-README.md -I 2000 " +
+    "-P convert_latin1_to_utf16+haswell " +
+    "-P convert_latin1_to_utf32+haswell " +
+    "-P convert_latin1_to_utf8+haswell " +
+    "-P convert_utf8_to_utf16+haswell " +
+    "-P convert_utf8_to_utf16_with_dynamic_allocation+haswell " +
+    "-P convert_utf8_to_utf16_with_errors+haswell " +
+    "-P convert_utf8_to_utf32+haswell " +
+    "-P convert_utf8_to_utf32_with_dynamic_allocation+haswell " +
+    "-P convert_utf8_to_utf32_with_errors+haswell " +
+    "-P convert_valid_utf8_to_latin1+haswell " +
+    "-P convert_valid_utf8_to_utf16+haswell " +
+    "-P convert_valid_utf8_to_utf32+haswell " +
+    "-P count_utf8+haswell " +
+    "-P detect_encodings+haswell " +
+    "-P utf8_length_from_latin1+haswell " +
+    "-P validate_utf8+haswell " +
+    "-P validate_utf8_with_errors+haswell",
+    [])
+
+if $hasAVX512
+    $benchmarks << Benchmark.new(
+        "../projects/simdutf-5.5.0/build/benchmarks/benchmark",
+        "-F benchmarkData/simdutf-README.md -I 2000 " +
+        "-P convert_latin1_to_utf16+icelake " +
+        "-P convert_latin1_to_utf32+icelake " +
+        "-P convert_latin1_to_utf8+icelake " +
+        "-P convert_utf8_to_utf16+icelake " +
+        "-P convert_utf8_to_utf16_with_dynamic_allocation+icelake " +
+        "-P convert_utf8_to_utf16_with_errors+icelake " +
+        "-P convert_utf8_to_utf32+icelake " +
+        "-P convert_utf8_to_utf32_with_dynamic_allocation+icelake " +
+        "-P convert_utf8_to_utf32_with_errors+icelake " +
+        "-P convert_valid_utf8_to_latin1+icelake " +
+        "-P convert_valid_utf8_to_utf16+icelake " +
+        "-P convert_valid_utf8_to_utf32+icelake " +
+        "-P count_utf8+icelake " +
+        "-P detect_encodings+icelake " +
+        "-P utf8_length_from_latin1+icelake " +
+        "-P validate_utf8+icelake " +
+        "-P validate_utf8_with_errors+icelake",
+        [])
+end
+
+$benchmarks << Benchmark.new(
+    "bin/tclsh",
+    "benchmarkData/richards.tcl",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/qjs",
+    "benchmarkData/richards.js",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/bzip3",
+    "< benchmarkData/libcrypto.3.dylib > benchmarkOutput/libcrypto.3.dylib.bz3",
+    [
+        "diff -n benchmarkOutput/libcrypto.3.dylib.bz3 benchmarkData/libcrypto.3.dylib.bz3"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/bzip3",
+    "-d < benchmarkData/libcrypto.3.dylib.bz3 > benchmarkOutput/libcrypto.3.dylib",
+    [
+        "diff -n benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
+    ])
+
+$benchmarks << Benchmark.new(
+    "benchmarks/binarytrees",
+    "20",
+    [])
+
+if $hasX86SIMD
+    $benchmarks << Benchmark.new(
+        "benchmarks/fannkuch-redux",
+        "12",
+        [])
+end
+
+$benchmarks << Benchmark.new(
+    "benchmarks/fannkuch-redux-2",
+    "11",
+    [])
+
+if $hasX86SIMD
+    $benchmarks << Benchmark.new(
+        "benchmarks/n-body",
+        "10000000",
+        [])
+end
+
+$benchmarks << Benchmark.new(
+    "benchmarks/n-body-2",
+    "10000000",
+    [])
+
+if $hasX86SIMD
+    $benchmarks << Benchmark.new(
+        "benchmarks/spectralnorm",
+        "3000",
+        [])
+end
+
+$benchmarks << Benchmark.new(
+    "bin/zstd",
+    "< benchmarkData/libcrypto.3.dylib > benchmarkOutput/libcrypto.3.dylib.zst",
+    [
+        "diff -n benchmarkOutput/libcrypto.3.dylib.zst benchmarkData/libcrypto.3.dylib.zst"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/dash",
+    "benchmarkData/richards.sh",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/zsh",
+    "benchmarkData/richards.sh",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/bash",
+    "benchmarkData/richards.sh",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/lz4",
+    "< benchmarkData/libcrypto.3.dylib > benchmarkOutput/libcrypto.3.dylib.lz4",
+    [
+        "diff -n benchmarkOutput/libcrypto.3.dylib.lz4 benchmarkData/libcrypto.3.dylib.lz4"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/perl",
+    "benchmarkData/nbody.pl 100000",
+    [])
+
+$benchmarks << Benchmark.new(
+    "bin/brotli",
+    "< benchmarkData/libpizlo.dylib > benchmarkOutput/libpizlo.dylib.br",
+    [
+        "diff -q benchmarkOutput/libpizlo.dylib.br benchmarkData/libpizlo.dylib.br"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/brotli",
+    "-d < benchmarkData/libcrypto.3.dylib.br > benchmarkOutput/libcrypto.3.dylib",
+    [
+        "diff -q benchmarkOutput/libcrypto.3.dylib benchmarkData/libcrypto.3.dylib"
+    ])
+
+$benchmarks << Benchmark.new(
+    "bin/bison",
+    "--no-lines --warnings=none --output=benchmarkOutput/bison-output.c benchmarkData/bison-grammar.y",
+    [
+      "diff -q benchmarkOutput/bison-output.c benchmarkData/bison-output.c"
+    ])
+
+$plugins.each {
+    | plugin |
+    load plugin
+}
+
+$benchmarks.filter! {
+    | benchmark |
+    benchmark.to_s =~ $filter
+}
+
+if $benchmarks.empty?
+    raise "No benchmarks found."
+end
+
+$pizfixes = []
+ARGV.each {
+    | argv |
+    $pizfixes << Pizfix.new(argv)
+}
+
+if $pizfixes.empty?
+    raise "No pizfixes found."
+end
+
+$plans = []
+$benchmarks.each {
+    | benchmark |
+    $pizfixes.each {
+        | pizfix |
+        $plans << Plan.new(benchmark, pizfix)
+    }
+}
+
+$plans = $plans * $repeats
+
+$plans.shuffle!
+
+$stderr.puts "Running #{$benchmarkName}!"
+
+$plans.each {
+    | plan |
+    plan.run
+}
+
+$results = []
+$benchmarks.each {
+    | benchmark |
+    $results << benchmark
+}
+$results << Geomean.new
+
+$stderr.puts
+
+puts "---------- The #{$benchmarkName} Results ----------"
+
+$results.each {
+    | results |
+    puts "#{results}:"
+    $pizfixes.each_with_index {
+        | pizfix, index |
+        puts "    #{pizfix}: #{results.resultsForPizfix(pizfix)}"
+        otherIndex = 0
+        mean = results.resultsForPizfix(pizfix).mean
+        while otherIndex < index
+            otherPizfix = $pizfixes[otherIndex]
+            otherMean = results.resultsForPizfix(otherPizfix).mean
+            if $pizfixes.length > 2
+                asStr = " as #{otherPizfix}"
+                thanStr = " than #{otherPizfix}"
+            else
+                asStr = ""
+                thanStr = ""
+            end
+            if mean == otherMean
+                puts "        exactly the same#{asStr}"
+            elsif mean < otherMean
+                puts("        %.6fx faster%s" % [otherMean / mean, thanStr])
+            else
+                puts("        %.6fx slower%s" % [mean / otherMean, thanStr])
+            end
+            otherIndex += 1
+        end
+    }
+}
+

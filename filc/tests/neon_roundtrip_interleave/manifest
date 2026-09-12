@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon roundtrip interleave test passed!"
+only-on-platform:
+  aarch64

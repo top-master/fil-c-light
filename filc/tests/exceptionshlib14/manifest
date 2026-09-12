@@ -1,0 +1,27 @@
+return:
+  failure
+output-includes:
+  "libc++abi: terminating due to uncaught exception of type MyException"
+libraries:
+  libfoo.so:
+    isBundle: true
+    files:
+      - foo.cpp
+    extraLinkerArgs:
+      "--version-script=filc/tests/exceptionshlib14/version.map -Wl,-Bsymbolic-functions"
+  libbar.so:
+    isBundle: true
+    files:
+      - bar.cpp
+    extraLinkerArgs:
+      "-Wl,-Bsymbolic-functions"
+  libbaz.so:
+    isBundle: true
+    files:
+      - baz.cpp
+    extraLinkerArgs:
+      "-Lfilc/test-output/exceptionshlib14 -lfoo -Wl,-Bsymbolic-functions"
+optFlags:
+  "-O2 -fPIC"
+extraLDPath:
+  "filc/test-output/exceptionshlib14"

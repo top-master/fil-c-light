@@ -1,0 +1,21 @@
+return:
+  success
+mkdirs:
+  - version1
+  - version2
+libraries:
+  version1/liblibrary:
+      isBundle: false
+      files:
+        - version1.c
+  version2/liblibrary:
+      isBundle: false
+      files:
+        - version2.c
+      extraLinkerArgs:
+        "-Wl,--version-script=filc/tests/symver1/version2.map"
+extraLinkerArgs:
+  "-Lfilc/test-output/symver1/version1 -llibrary"
+extraLDPath:
+  "filc/test-output/symver1/version2"
+

@@ -1,0 +1,9 @@
+return:
+  failure
+only-on-platform:
+  aarch64
+needsLSE:
+  true
+output-includes:
+  - filc safety error
+  - cannot write pointer with ptr >= upper

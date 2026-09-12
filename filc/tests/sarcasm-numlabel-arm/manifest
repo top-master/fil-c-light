@@ -1,0 +1,9 @@
+return:
+  success
+only-on-platform:
+  aarch64
+output-includes:
+  - "sumto(10) = 55"
+  - "sumto(-3) = 0"
+  - "sumto(1) = 1"
+  - "sumto(100) = 5050"

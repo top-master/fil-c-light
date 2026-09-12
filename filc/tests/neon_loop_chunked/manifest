@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon loop chunked test passed!"
+only-on-platform:
+  aarch64

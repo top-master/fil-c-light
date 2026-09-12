@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon zgc ld4 test passed!"
+only-on-platform:
+  aarch64

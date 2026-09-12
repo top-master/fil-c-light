@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  "main(swapcontext);func2(swapcontext);func1(swapcontext);func2(setcontext);filc user error: unexpected return from fiber context main."
+
+needsGLIBC:
+  tru

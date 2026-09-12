@@ -1,0 +1,6 @@
+{
+    global:
+        foo*;
+        bar*;
+    local: *;
+};

@@ -1,0 +1,9 @@
+return:
+  success
+output-includes:
+  - "foo:thingy:foo::thingy(666)"
+  - "foo:stuff:foo::stuff(666)"
+  - "foo:delete:foo::~foo(666)"
+  - "bar:thingy:bar::thingy(1410)"
+  - "bar:stuff:bar::stuff(1410)"
+  - "bar:delete:bar::~bar(1410)foo::~foo(42)"

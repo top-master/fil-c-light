@@ -1,0 +1,7 @@
+return:
+  success
+only-on-platform:
+  aarch64
+output-includes:
+  - "cvt 85 4294967294 84 6 4294967262 200 4294967222"
+  - "sat -9223372034707292162"

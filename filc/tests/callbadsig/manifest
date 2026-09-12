@@ -1,0 +1,10 @@
+return:
+   success
+output-includes:
+ - thingy
+ - stuff
+ - yay
+ - nonono
+output-excludes:
+ - hello
+ - filc safety error

@@ -1,0 +1,9 @@
+return:
+  success
+output-includes:
+  - "8-byte: lock-free"
+  - "16-byte (16-aligned): lock-free"
+  - "24-byte: not lock-free"
+  - "success"
+output-excludes:
+  - "FAIL"

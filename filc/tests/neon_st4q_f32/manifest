@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon st4q f32 test passed!"
+only-on-platform:
+  aarch64

@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsI8MM:
+  true
+optFlags:
+  "-march=armv8.2-a+i8mm"

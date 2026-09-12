@@ -1,0 +1,4 @@
+return:
+  success
+extraLinkerArgs:
+  "-static"

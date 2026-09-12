@@ -1,0 +1,4 @@
+return:
+  compileOnly
+optFlags:
+  "-O3 -fstrict-vtable-pointers"

@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  x86_64
+output-includes:
+  - "dead regs ok"
+slow:
+  true

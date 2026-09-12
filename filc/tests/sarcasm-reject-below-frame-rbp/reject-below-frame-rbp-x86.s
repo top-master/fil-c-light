@@ -1,0 +1,13 @@
+	.file	"below-frame.c"
+	.text
+	.globl	f
+	.type	f, @function
+f:                              ;! long()
+	pushq	%rbp
+	movq	%rsp, %rbp
+	subq	$16, %rsp
+	movq	-160(%rbp), %rax
+	leave
+	ret
+	.size	f, .-f
+	.section	.note.GNU-stack,"",@progbits

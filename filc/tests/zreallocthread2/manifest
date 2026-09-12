@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  - filc safety error
+  - Spoko
+output-excludes:
+  - "Nie dobrze"

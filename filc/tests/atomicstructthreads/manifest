@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "success"
+output-excludes:
+  - "FAIL"

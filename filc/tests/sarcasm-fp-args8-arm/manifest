@@ -1,0 +1,17 @@
+return:
+  success
+only-on-platform:
+  aarch64
+libraries:
+  libfpargs8:
+    isBundle: false
+    files:
+      - f8.s
+    extraLinkerArgs:
+      "--version-script=filc/tests/sarcasm-fp-args8-arm/ver.ld"
+extraLinkerArgs:
+  "-Lfilc/test-output/sarcasm-fp-args8-arm -lfpargs8"
+extraLDPath:
+  "filc/test-output/sarcasm-fp-args8-arm"
+output-includes:
+  - "fp-args8 ok"

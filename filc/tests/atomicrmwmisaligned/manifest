@@ -1,0 +1,18 @@
+return:
+  success
+
+output-includes:
+  - "start = 0x123456789abcdef00fedcba987654321"
+  - "fetch_add old = 0x123456789abcdef00fedcba987654321 new = 0x133333333333332220fedcba98765432"
+  - "fetch_sub old = 0x133333333333332220fedcba98765432 new = 0x133333333333332020fedcba98765433"
+  - "fetch_and old = 0x133333333333332020fedcba98765433 new = 0x30303030303030020fedcba00000000"
+  - "fetch_or old = 0x30303030303030020fedcba00000000 new = 0x3ff03ff03ff03ff20fedcbaffffffff"
+  - "fetch_xor old = 0x3ff03ff03ff03ff20fedcbaffffffff new = 0x95509550955095575ab89efaaaaaaaa"
+  - "fetch_nand old = 0x95509550955095575ab89efaaaaaaaa new = 0xf6aaf6aaf6aaf6aa8aff76ff55ff55ff"
+  - "final = 0xf6aaf6aaf6aaf6aa8aff76ff55ff55ff"
+  - "threaded sum = 1000000"
+  - "threaded old-value sum = 499999500000"
+  - "success"
+
+output-excludes:
+  - "FAIL"

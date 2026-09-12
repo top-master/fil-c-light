@@ -1,0 +1,75 @@
+# Copyright (c) 2024 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+
+all: build/libpas.so build/test_pas
+
+ARCH ?= $(shell uname -m)
+
+ifeq ($(ARCH),x86_64)
+ARCH_CFLAGS = -march=x86-64-v2
+else
+ARCH_CFLAGS =
+endif
+
+PASCC = clang $(ARCH_CFLAGS) -fPIC -pthread
+PASCXX = clang++ $(ARCH_CFLAGS) -fPIC -pthread
+
+PASCXXFLAGS = -g -O3 -W -Werror -std=c++17 -Wno-unused-parameter -Wno-sign-compare \
+	-Wno-missing-field-initializers -Wno-vla-cxx-extension -Wno-unknown-warning-option \
+	-fno-strict-aliasing -MD
+
+include common.mk
+
+TESTPASSRCS = $(wildcard src/test/*.cpp)
+VERIFIERSRCS = $(wildcard src/verifier/*.cpp)
+
+PASTESTOBJS = $(patsubst %.c,build/pas-test-%.o,$(notdir $(PASSRCS)))
+
+TESTPASOBJS = $(patsubst %.cpp,build/test_pas-%.o,$(notdir $(TESTPASSRCS)))
+VERIFIEROBJS = $(patsubst %.cpp,build/verifier-%.o,$(notdir $(VERIFIERSRCS)))
+
+-include $(wildcard build/*.d)
+
+clean:
+	rm -rf build
+
+check: build/test_pas
+	LD_LIBRARY_PATH=build build/test_pas
+
+build/test_pas: build/libpas.so $(TESTPASOBJS) $(VERIFIEROBJS)
+	clang++ -o build/test_pas $(TESTPASOBJS) $(VERIFIEROBJS) \
+		-Lbuild -lpas -pthread -lutil
+
+build/libpas.so: $(PASTESTOBJS)
+	clang -shared -o build/libpas.so $(PASTESTOBJS)
+
+build/pas-test-%.o: src/libpas/%.c
+	$(PASCC) $(PASCFLAGS) -c -o $@ $< -DENABLE_PAS_TESTING=1
+
+build/test_pas-%.o: src/test/%.cpp
+	$(PASCXX) $(PASCXXFLAGS) -c -o $@ $< -DENABLE_PAS_TESTING=1 -Isrc/libpas -Isrc/verifier
+
+build/verifier-%.o: src/verifier/%.cpp
+	$(PASCXX) $(PASCXXFLAGS) -c -o $@ $< -DENABLE_PAS_TESTING=1 -Isrc/libpas
+

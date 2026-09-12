@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "filc safety error: addition 8 + 18446744073709551615 overflowed"
+output-excludes:
+  - "should not get here"

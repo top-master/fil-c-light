@@ -1,0 +1,7 @@
+return:
+  failure
+output-includes:
+  - filc safety error
+  - cannot write pointer to special object
+output-excludes:
+  blah

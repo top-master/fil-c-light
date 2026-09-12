@@ -1,0 +1,5 @@
+return:
+  failure
+output-includes:
+  - "filc safety error: attempted to use global variable that is currently being initialized."
+

@@ -1,0 +1,7 @@
+return:
+   success
+output-includes:
+   - Yesyes
+   - Nono
+only-on-platform:
+  x86_64

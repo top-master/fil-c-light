@@ -1,0 +1,8 @@
+needsGLIBC:
+  true
+return:
+  success
+output-includes:
+  - "Success!"
+slow:
+  true

@@ -1,0 +1,7 @@
+FOO_BAR {
+    global:
+    _ZTI*; _ZTS*;
+    foo;
+    local: *;
+};
+

@@ -1,0 +1,68 @@
+# A base system Docker image containing essential programs (Coreutils, Binutils, Bash, curl, etc.) compiled using Fil-C.
+
+# -----------------------------
+# Stage 1: Build the root filesystem using Alpine Linux
+# -----------------------------
+FROM alpine:latest AS builder
+
+# Install tools for patching ELF binaries and inspecting files
+RUN apk add --no-cache patchelf file
+
+# Install CA certificates bundle for HTTPS support (required by curl, git, etc.)
+RUN apk add --no-cache ca-certificates-bundle
+
+# Create the root filesystem directory structure
+RUN mkdir -p /rootfs
+
+# Copy pre-compiled programs and libraries (built with Fil-C toolchain) into the root filesystem
+# NOTE: In production, these should be built with the custom clang/LLVM toolchain provided by Fil-C.
+# For demonstration, we use pre-compiled binaries and patch their ELF interpreter paths.
+# Some programs (e.g., Python, git) may not work since some paths are hardcoded during compilation.
+COPY pizfix /rootfs/usr
+
+# Patch ELF interpreter paths to use the custom loader
+RUN find /rootfs/usr/bin /rootfs/usr/sbin /rootfs/usr/libexec \
+    -type f \
+    -executable ! -name "*.so" \
+    -exec sh -c 'if file "{}" | grep -q "ELF" && file "{}" | grep -q "dynamically linked"; then \
+        patchelf --set-interpreter /lib/ld-fil1-x86_64.so "{}"; \
+    fi' {} \;
+
+# Create standard symlinks for compatibility:
+#   /bin   -> /usr/bin
+#   /sbin  -> /usr/sbin
+#   /lib   -> /usr/lib
+RUN ln -s -f usr/bin /rootfs/bin && \
+    ln -s -f usr/sbin /rootfs/sbin && \
+    ln -s -f usr/lib /rootfs/lib
+
+# Set Bash as the default shell by symlinking /bin/sh to bash
+RUN ln -s -f bash /rootfs/bin/sh
+
+# -----------------------------
+# Stage 2: Assemble the final minimal Docker image
+# -----------------------------
+FROM scratch
+
+# Copy the prepared root filesystem and essential configuration files from the builder stage
+COPY --from=builder /rootfs /
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /etc/ssl/cert.pem /etc/ssl/cert.pem
+COPY --from=builder /etc/passwd /etc/group /etc/shadow /etc/
+
+# Create the root user's home directory
+RUN mkdir -p /root
+
+# Set up a colorful prompt and alias for 'ls' in the root user's shell
+RUN echo 'alias ls="ls --color=auto"' > /root/.bashrc && \
+    echo 'export PS1="\\[\\u@\\h \\w]\\$ "' >> /root/.bashrc
+
+# Set environment variables for the root user and system PATH
+ENV HOME /root
+ENV PATH /bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin
+
+# Set the working directory to the root user's home
+WORKDIR /root
+
+# Start an interactive Bash shell by default
+CMD /bin/bash

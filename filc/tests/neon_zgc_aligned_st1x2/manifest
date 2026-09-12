@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon zgc aligned st1x2 test passed!"
+only-on-platform:
+  aarch64

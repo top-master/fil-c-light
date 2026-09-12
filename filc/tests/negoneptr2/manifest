@@ -1,0 +1,5 @@
+return:
+  success
+output-includes:
+  - ptr = 0xffffffffffffffff,<null>
+  - Yay!

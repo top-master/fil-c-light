@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsASIMDHP:
+  true
+optFlags:
+  "-march=armv8.2-a+fp16fml"

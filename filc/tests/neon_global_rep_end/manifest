@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon global rep end test passed!"
+only-on-platform:
+  aarch64

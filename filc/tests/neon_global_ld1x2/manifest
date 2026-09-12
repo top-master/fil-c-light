@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon global ld1x2 test passed!"
+only-on-platform:
+  aarch64

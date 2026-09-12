@@ -1,0 +1,5 @@
+return:
+  success
+output-excludes:
+  - "cleanup_foo(666);"
+  - "cleanup_bar(1410);"

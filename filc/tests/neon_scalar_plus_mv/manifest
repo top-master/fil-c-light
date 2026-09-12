@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon scalar plus mv test passed!"
+only-on-platform:
+  aarch64

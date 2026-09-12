@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsARMCrypto:
+  true
+optFlags:
+  "-march=armv8-a+crypto"

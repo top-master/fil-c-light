@@ -1,0 +1,4 @@
+return:
+  failure
+output-includes:
+  - "bytes when upper - ptr ="

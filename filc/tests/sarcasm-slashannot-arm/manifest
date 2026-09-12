@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+output-includes:
+  - "11 22 33"
+  - "a //! b"
+  - "a ;! b"

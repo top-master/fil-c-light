@@ -1,0 +1,15 @@
+return:
+  success
+libraries:
+  libfoo:
+    isBundle: false
+    files:
+      - foo.cpp
+    extraLinkerArgs:
+      "--version-script=filc/tests/exceptionshlib2/version.map"
+optFlags:
+  "-O2 -fPIC -fvisibility=hidden"
+extraLinkerArgs:
+  "-Lfilc/test-output/exceptionshlib2 -lfoo"
+extraLDPath:
+  "filc/test-output/exceptionshlib2"

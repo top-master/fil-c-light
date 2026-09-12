@@ -1,0 +1,6 @@
+return:
+  success
+optFlags:
+  "-yolo-assembler -O2"
+only-on-platform:
+  x86_64

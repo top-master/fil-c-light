@@ -1,0 +1,8 @@
+return:
+  success
+only-on-platform:
+  aarch64
+needsARMCrypto:
+  true
+output-includes:
+  - "crypto ok"

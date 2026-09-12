@@ -1,0 +1,29 @@
+# A Docker image for Fil-C development and compilation.
+FROM ubuntu:25.04
+
+# Set non-interactive mode to avoid tzdata and other prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update system package lists and upgrade installed packages
+RUN apt update && apt upgrade -y
+
+# Install essential build tools (compiler, linker, etc.)
+RUN apt install -y build-essential
+
+# Install development dependencies required for building Fil-C and related projects
+RUN apt install -y \
+    pkg-config autotools-dev automake autoconf libtool \
+    clang lld cmake ninja-build ruby \
+    patchelf bison flex texinfo gettext
+
+# Install basic utilities for development and version control
+RUN apt install -y curl vim git
+
+# Create the project source directory inside the container
+RUN mkdir -p /opt/fil-c
+
+# Set the working directory to the project source directory
+WORKDIR /opt/fil-c
+
+# Start an interactive Bash shell by default when the container runs
+CMD /usr/bin/bash

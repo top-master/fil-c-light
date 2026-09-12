@@ -1,0 +1,4 @@
+return:
+  failure
+output-includes:
+  - "cannot write to read-only object"

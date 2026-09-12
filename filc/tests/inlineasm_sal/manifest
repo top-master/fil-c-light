@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "sal ok"
+only-on-platform:
+  x86_64

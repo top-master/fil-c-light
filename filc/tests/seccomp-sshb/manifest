@@ -1,0 +1,7 @@
+return:
+  success
+output-includes:
+  - "Seccomp filter installed successfully."
+  - "Success!"
+slow:
+  true

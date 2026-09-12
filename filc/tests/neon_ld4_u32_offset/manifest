@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld4 u32 offset test passed!"
+only-on-platform:
+  aarch64

@@ -1,0 +1,697 @@
+#!/usr/bin/env ruby
+#
+# Copyright (c) 2023-2025 Epic Games, Inc. All Rights Reserved.
+# Copyright (c) 2026 Filip Pizlo. All Rights Reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY FILIP PIZLO ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL FILIP PIZLO OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+
+require 'etc'
+require 'pathname'
+require 'shellwords'
+require 'yaml'
+require 'fileutils'
+require 'getoptlong'
+
+$runTests = true
+$verbose = false
+$filter = /./
+$specificTest = nil
+
+$compilerPrefix = ""
+$bundleOpt = "-shared"
+$dylibOpt = "-shared"
+$dylibExt = ".so"
+$libraryPathEnv = "LD_LIBRARY_PATH"
+$make = "make"
+$pizfix = "pizfix"
+
+GetoptLong.new(
+    [ '--no-run', '-n', GetoptLong::NO_ARGUMENT ],
+    [ '--verbose', '-v', GetoptLong::NO_ARGUMENT ],
+    [ '--filter', '-f', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--test', '-t', GetoptLong::REQUIRED_ARGUMENT ],
+    [ '--pizfix', '-p', GetoptLong::REQUIRED_ARGUMENT ],
+).each {
+    | opt, arg |
+    case opt
+    when '--no-run'
+        $runTests = false
+    when '--verbose'
+        $verbose = true
+    when '--filter'
+        $filter = Regexp.new(arg)
+    when '--test'
+        $specificTest = arg
+    when '--pizfix'
+        $pizfix = arg
+    else
+        raise
+    end
+}
+
+raise unless ARGV.empty?
+
+# Check if we have avx512
+raise unless system("clang -O3 -g -o filc/tests/has_avx512 filc/tests/has_avx512.c")
+system("filc/tests/has_avx512 > filc/tests/has_avx512.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasAVX512 = $?.exitstatus == 0
+
+# Check if we have Intel SHA extensions (SHA-NI)
+raise unless system("clang -O3 -g -o filc/tests/has_shani filc/tests/has_shani.c")
+system("filc/tests/has_shani > filc/tests/has_shani.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasSHANI = $?.exitstatus == 0
+
+# Check if we have ARM crypto
+raise unless system("clang -O3 -g -o filc/tests/has_armcrypto filc/tests/has_armcrypto.c")
+system("filc/tests/has_armcrypto > filc/tests/has_armcrypto.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasARMCrypto = $?.exitstatus == 0
+
+# Check if we have ARM LSE atomics
+raise unless system("clang -O3 -g -o filc/tests/has_lse filc/tests/has_lse.c")
+system("filc/tests/has_lse > filc/tests/has_lse.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasLSE = $?.exitstatus == 0
+
+# Check if we have ARM JSCVT (fjcvtzs)
+raise unless system("clang -O3 -g -o filc/tests/has_jscvt filc/tests/has_jscvt.c")
+system("filc/tests/has_jscvt > filc/tests/has_jscvt.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasJSCVT = $?.exitstatus == 0
+
+# Check if we have ARMv8.2 FP16 (scalar half-precision)
+raise unless system("clang -O3 -g -o filc/tests/has_fp16 filc/tests/has_fp16.c")
+system("filc/tests/has_fp16 > filc/tests/has_fp16.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasFP16 = $?.exitstatus == 0
+
+# Check if we have ARMv8.2 FP16 (vector half-precision)
+raise unless system("clang -O3 -g -o filc/tests/has_asimdhp filc/tests/has_asimdhp.c")
+system("filc/tests/has_asimdhp > filc/tests/has_asimdhp.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasASIMDHP = $?.exitstatus == 0
+
+# Check if we have BFloat16 (bfcvt/bfcvtn/bfdot & co)
+raise unless system("clang -O3 -g -o filc/tests/has_bf16 filc/tests/has_bf16.c")
+system("filc/tests/has_bf16 > filc/tests/has_bf16.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasBF16 = $?.exitstatus == 0
+
+# Check if we have 8-bit integer matrix multiply (smmla/ummla/usmmla/usdot)
+raise unless system("clang -O3 -g -o filc/tests/has_i8mm filc/tests/has_i8mm.c")
+system("filc/tests/has_i8mm > filc/tests/has_i8mm.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasI8MM = $?.exitstatus == 0
+
+# Check if we have CRC-32 checksum instructions
+raise unless system("clang -O3 -g -o filc/tests/has_crc32 filc/tests/has_crc32.c")
+system("filc/tests/has_crc32 > filc/tests/has_crc32.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasCRC32 = $?.exitstatus == 0
+
+# Check if we have Armv8.4 flag manipulation (cfinv/rmif/setf32/axflag & co)
+raise unless system("clang -O3 -g -o filc/tests/has_flagm filc/tests/has_flagm.c")
+system("filc/tests/has_flagm > filc/tests/has_flagm.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasFLAGM = $?.exitstatus == 0
+
+# Check if we have Armv8.4.2 flag manipulation (setf16/setf64)
+raise unless system("clang -O3 -g -o filc/tests/has_flagm2 filc/tests/has_flagm2.c")
+system("filc/tests/has_flagm2 > filc/tests/has_flagm2.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasFLAGM2 = $?.exitstatus == 0
+
+# Check if we have ARM SHA-3 crypto hash (eor3/rax1/xar/bcax)
+raise unless system("clang -O3 -g -o filc/tests/has_sha3 filc/tests/has_sha3.c")
+system("filc/tests/has_sha3 > filc/tests/has_sha3.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasSHA3 = $?.exitstatus == 0
+
+# Check if we have ARM SHA-512 crypto hash
+raise unless system("clang -O3 -g -o filc/tests/has_sha512 filc/tests/has_sha512.c")
+system("filc/tests/has_sha512 > filc/tests/has_sha512.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasSHA512 = $?.exitstatus == 0
+
+# Check if we have pointer authentication code
+raise unless system("clang -O3 -g -o filc/tests/has_paca filc/tests/has_paca.c")
+system("filc/tests/has_paca > filc/tests/has_paca.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasPACA = $?.exitstatus == 0
+
+# Check if we have SVE (FEAT_SVE)
+raise unless system("clang -O3 -g -o filc/tests/has_sve filc/tests/has_sve.c")
+system("filc/tests/has_sve > filc/tests/has_sve.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasSVE = $?.exitstatus == 0
+
+# Check if we have the architectural random number generator (mrs rndr)
+raise unless system("clang -O3 -g -o filc/tests/has_rng filc/tests/has_rng.c")
+system("filc/tests/has_rng > filc/tests/has_rng.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasRNG = $?.exitstatus == 0
+
+# Check if we have FEAT_FRINTTS (frint32z/frint32x/frint64z/frint64x)
+raise unless system("clang -O3 -g -o filc/tests/has_frintts filc/tests/has_frintts.c")
+system("filc/tests/has_frintts > filc/tests/has_frintts.log 2>&1")
+raise unless $?.exited?
+raise unless $?.exitstatus == 0 or $?.exitstatus == 1
+$hasFRINTTS = $?.exitstatus == 0
+
+# Check if we're using glibc
+$hasGLIBC = (Pathname.new($pizfix) + "lib" + "libc.so.6666").exist?
+
+raise unless system("#{$compilerPrefix}#{$pizfix}/../build/bin/clang -O3 -c -o filc/tests/utils.o filc/tests/utils.c -g")
+
+$testDirectory = Pathname.new("filc/tests")
+$testOutputDirectory = Pathname.new("filc/test-output")
+FileUtils.rm_rf($testOutputDirectory)
+if Pathname.new("filc/run-tests-docker-hack").exist?
+    realOutputDirectory = Pathname.new("/filc-test-output")
+    realOutputDirectory.mkpath
+    realOutputDirectory.rmtree
+    realOutputDirectory.mkpath
+    $testOutputDirectory.make_symlink(realOutputDirectory)
+    $dockerHack = true
+else
+    $testOutputDirectory.mkpath
+    $dockerHack = false
+end
+
+$tests = []
+
+def handleArray(thing)
+    return [] unless thing
+    return thing if thing.is_a? Array
+    [thing]
+end
+
+$testDirectory.each_entry {
+    | testName |
+    next if testName == Pathname.new(".")
+    next if testName == Pathname.new("..")
+    next unless testName.to_s =~ $filter
+    if $specificTest
+        next unless testName.to_s == $specificTest
+    end
+    fullPath = $testDirectory + testName
+    next unless fullPath.directory?
+    unless (fullPath + "manifest").exist?
+        puts "Skipping #{testName}, no manifest."
+        next
+    end
+    outputPath = $testOutputDirectory + testName
+    outputPath.mkpath
+    manifest = YAML.load_file(fullPath + "manifest")
+    onlyOnPlatform = manifest["only-on-platform"]
+    if onlyOnPlatform and RUBY_PLATFORM !~ Regexp.new(onlyOnPlatform)
+        if $verbose
+            puts "Skipping #{testName}, requires #{onlyOnPlatform}"
+        end
+        next
+    end
+    if manifest["needsAVX512"] and not $hasAVX512
+        if $verbose
+            puts "Skipping #{testName}, requires AVX512"
+        end
+        next
+    end
+    if manifest["needsSHANI"] and not $hasSHANI
+        if $verbose
+            puts "Skipping #{testName}, requires SHA-NI"
+        end
+        next
+    end
+    if manifest["needsARMCrypto"] and not $hasARMCrypto
+        if $verbose
+            puts "Skipping #{testName}, requires ARM crypto"
+        end
+        next
+    end
+    if manifest["needsLSE"] and not $hasLSE
+        if $verbose
+            puts "Skipping #{testName}, requires ARM LSE"
+        end
+        next
+    end
+    if manifest["needsJSCVT"] and not $hasJSCVT
+        if $verbose
+            puts "Skipping #{testName}, requires ARM JSCVT"
+        end
+        next
+    end
+    if manifest["needsFP16"] and not $hasFP16
+        if $verbose
+            puts "Skipping #{testName}, requires ARMv8.2 FP16"
+        end
+        next
+    end
+    if manifest["needsASIMDHP"] and not $hasASIMDHP
+        if $verbose
+            puts "Skipping #{testName}, requires ARMv8.2 vector FP16"
+        end
+        next
+    end
+    if manifest["needsBF16"] and not $hasBF16
+        if $verbose
+            puts "Skipping #{testName}, requires BFloat16"
+        end
+        next
+    end
+    if manifest["needsI8MM"] and not $hasI8MM
+        if $verbose
+            puts "Skipping #{testName}, requires ARM i8mm"
+        end
+        next
+    end
+    if manifest["needsCRC32"] and not $hasCRC32
+        if $verbose
+            puts "Skipping #{testName}, requires ARM CRC32"
+        end
+        next
+    end
+    if manifest["needsFLAGM"] and not $hasFLAGM
+        if $verbose
+            puts "Skipping #{testName}, requires ARMv8.4 flag manipulation"
+        end
+        next
+    end
+    if manifest["needsFLAGM2"] and not $hasFLAGM2
+        if $verbose
+            puts "Skipping #{testName}, requires ARMv8.4.2 flag manipulation"
+        end
+        next
+    end
+    if manifest["needsSHA3"] and not $hasSHA3
+        if $verbose
+            puts "Skipping #{testName}, requires ARM SHA3"
+        end
+        next
+    end
+    if manifest["needsSHA512"] and not $hasSHA512
+        if $verbose
+            puts "Skipping #{testName}, requires ARM SHA512"
+        end
+        next
+    end
+    if manifest["needsPACA"] and not $hasPACA
+        if $verbose
+            puts "Skipping #{testName}, requires ARM pointer authentication"
+        end
+        next
+    end
+    if manifest["needsSVE"] and not $hasSVE
+        if $verbose
+            puts "Skipping #{testName}, requires ARM SVE"
+        end
+        next
+    end
+    if manifest["needsRNG"] and not $hasRNG
+        if $verbose
+            puts "Skipping #{testName}, requires ARM random number generator"
+        end
+        next
+    end
+    if manifest["needsFRINTTS"] and not $hasFRINTTS
+        if $verbose
+            puts "Skipping #{testName}, requires FEAT_FRINTTS"
+        end
+        next
+    end
+    if manifest["needsGLIBC"] and not $hasGLIBC
+        if $verbose
+            puts "Skipping #{testName}, requires GLIBC"
+        end
+        next
+    end
+    if manifest["skip"] and not $specificTest
+        puts "Skipping #{testName}"
+        next
+    end
+    if manifest["neverInDocker"] and $dockerHack
+        puts "Skipping #{testName} because of Docker"
+        next
+    end
+    expectedReturn = manifest["return"]
+    raise unless expectedReturn == "success" or expectedReturn == "failure" or
+        expectedReturn == "crash" or expectedReturn == "compileFailure" or
+        expectedReturn == "dontCrash" or expectedReturn == "exit13" or
+        expectedReturn == "compileOnly" or expectedReturn == "linkFailure"
+    expectedOutputs = handleArray(manifest["output-includes"])
+    forbiddenOutputs = handleArray(manifest["output-excludes"])
+    optFlags = manifest["optFlags"]
+    unless optFlags
+        optFlags = "-O2"
+    end
+    handleArray(manifest["mkdirs"]).each {
+        | dirToMake |
+        (outputPath + dirToMake).mkpath
+    }
+    runScript = outputPath + "run.sh"
+    compileScript = outputPath + "compile.sh"
+    justRunScript = outputPath + "justRun.sh"
+    justRunReleaseScript = outputPath + "justRunRelease.sh"
+    subRunScript = outputPath + "subRun.sh"
+    subRunScribbleScript = outputPath + "subRunScribble.sh"
+    subRunSTWScript = outputPath + "subRunSTW.sh"
+    subRunReleaseScript = outputPath + "subRunRelease.sh"
+    binary = outputPath + testName
+    compilerOutput = outputPath + "compilerOutput.txt"
+    output = outputPath + "output.txt"
+    outputScribble = outputPath + "outputScribble.txt"
+    outputSTW = outputPath + "outputSTW.txt"
+    outputRelease = outputPath + "outputRelease.txt"
+    File.open(compileScript, "w") {
+        | outp |
+        outp.puts "#!/bin/sh"
+        libraries = manifest["libraries"]
+        libraryFiles = {}
+        outp.puts "rm -f #{Shellwords.shellescape(compilerOutput)}"
+        outp.puts "touch #{Shellwords.shellescape(compilerOutput)}"
+        fullPath.each_entry {
+            | entry |
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
+            isCpp = entry.extname == ".cpp"
+            if isCpp
+                clang = "clang++"
+                extraOpts = "-std=c++20"
+            else
+                clang = "clang"
+                extraOpts = ""
+            end
+            outp.puts "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clang} -c -o #{Shellwords.shellescape(outputPath + entry)}.o #{Shellwords.shellescape(fullPath + entry)} -Ifilc/tests #{optFlags} -g #{extraOpts} >> #{Shellwords.shellescape(compilerOutput)} 2>&1"
+            if expectedReturn == "compileFailure"
+                outp.puts "if [ $? -eq 0 ]"
+                outp.puts "then"
+                outp.puts("    echo " + Shellwords.shellescape(runScript.to_s + ": FAIL: compiled #{entry} but shouldn't have"))
+                outp.puts "    cat #{Shellwords.shellescape(compilerOutput)}"
+                outp.puts "    exit 1"
+                outp.puts "fi"
+            else
+                outp.puts "if [ $? -ne 0 ]"
+                outp.puts "then"
+                outp.puts("    echo " + Shellwords.shellescape(runScript.to_s + ": FAIL: couldn't compile #{entry}"))
+                outp.puts "    cat #{Shellwords.shellescape(compilerOutput)}"
+                outp.puts "    exit 1"
+                outp.puts "fi"
+            end
+        }
+        break if expectedReturn == "compileFailure" or expectedReturn == "compileOnly"
+        if libraries
+            libraries.each_pair {
+                | libname, data |
+                isStatic = false
+                if data["isStatic"]
+                    libname += ".a"
+                    outp.print "ar cr #{Shellwords.shellescape(outputPath + libname)}"
+                else
+                    if data["isBundle"]
+                        libraryOpt = $bundleOpt
+                    else
+                        libraryOpt = $dylibOpt
+                        libname += $dylibExt
+                    end
+                    linkerIsCpp = false
+                    data["files"].each {
+                        | entry |
+                        linkerIsCpp = true if Pathname.new(entry).extname == ".cpp"
+                    }
+                    if linkerIsCpp
+                        clangLinker = "clang++"
+                    else
+                        clangLinker = "clang"
+                    end
+                    outp.print "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clangLinker} #{libraryOpt} -o #{Shellwords.shellescape(outputPath + libname)}"
+                end
+                data["files"].each {
+                    | file |
+                    libraryFiles[file] = true
+                    outp.print " #{Shellwords.shellescape(outputPath + file)}.o"
+                }
+                if data["extraLinkerArgs"]
+                    outp.print " "
+                    outp.print data["extraLinkerArgs"]
+                end
+                outp.puts " >> #{Shellwords.shellescape(compilerOutput)} 2>&1"
+                outp.puts "if [ $? -ne 0 ]"
+                outp.puts "then"
+                outp.puts("    echo " + Shellwords.shellescape(runScript.to_s + ": FAIL: couldn't link #{libname}"))
+                outp.puts "    cat #{Shellwords.shellescape(compilerOutput)}"
+                outp.puts "    exit 1"
+                outp.puts "fi"
+            }
+        end
+        linkerIsCpp = false
+        fullPath.each_entry {
+            | entry |
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
+            next if libraryFiles[entry.to_s]
+            linkerIsCpp = true if entry.extname == ".cpp"
+        }
+        if linkerIsCpp
+            clangLinker = "clang++"
+        else
+            clangLinker = "clang"
+        end
+        outp.print "#{$compilerPrefix}#{$pizfix}/../build/bin/#{clangLinker} -o #{Shellwords.shellescape(binary)}"
+        fullPath.each_entry {
+            | entry |
+            next unless entry.extname == ".c" or entry.extname == ".ll" or entry.extname == ".cpp" or entry.extname == ".s"
+            next if libraryFiles[entry.to_s]
+            outp.print " #{Shellwords.shellescape(outputPath + entry)}.o"
+        }
+        if manifest["extraLinkerArgs"]
+            outp.print " #{manifest["extraLinkerArgs"]}"
+        end
+        outp.puts " filc/tests/utils.o >> #{Shellwords.shellescape(compilerOutput)} 2>&1"
+        if expectedReturn == "linkFailure"
+            outp.puts "if [ $? -eq 0 ]"
+            outp.puts "then"
+            outp.puts("    echo " + Shellwords.shellescape(runScript.to_s + ": FAIL: linked but shouldn't have"))
+            outp.puts "    cat #{Shellwords.shellescape(compilerOutput)}"
+            outp.puts "    exit 1"
+            outp.puts "fi"
+        else
+            outp.puts "if [ $? -ne 0 ]"
+            outp.puts "then"
+            outp.puts("    echo " + Shellwords.shellescape(runScript.to_s + ": FAIL: couldn't link"))
+            outp.puts "    cat #{Shellwords.shellescape(compilerOutput)}"
+            outp.puts "    exit 1"
+            outp.puts "fi"
+        end
+    }
+    if expectedReturn != "compileFailure" and expectedReturn != "compileOnly" and
+      expectedReturn != "linkFailure"
+        extraArgs = handleArray(manifest["extraArgs"]).map {
+            | arg |
+            Shellwords.shellescape(arg)
+        }.join(" ")
+        File.open(justRunScript, "w") {
+            | outp |
+            outp.puts "#!/bin/sh"
+            outp.puts "set -e"
+            outp.print "#{$libraryPathEnv}=#{$pizfix}/lib_test"
+            if manifest["extraLDPath"]
+                outp.print ":#{manifest["extraLDPath"]}"
+            end
+            outp.print " "
+            handleArray(manifest["extra-env"]).each {
+                | entry |
+                outp.print "#{entry} "
+            }
+            outp.puts "#{Shellwords.shellescape(binary)} #{extraArgs}"
+        }
+        File.open(justRunReleaseScript, "w") {
+            | outp |
+            outp.puts "#!/bin/sh"
+            outp.puts "set -e"
+            if manifest["extraLDPath"]
+                outp.print "#{$libraryPathEnv}=#{manifest["extraLDPath"]} "
+            end
+            handleArray(manifest["extra-env"]).each {
+                | entry |
+                outp.print "#{entry} "
+            }
+            outp.puts "#{Shellwords.shellescape(binary)} #{extraArgs}"
+        }
+        [{:script => subRunScript,
+          :cmdPrefix => "FUGC_RAGE_MODE=1",
+          :justRunScript => justRunScript,
+          :output => output},
+         {:script => subRunScribbleScript,
+          :cmdPrefix => "FUGC_RAGE_MODE=1 FUGC_SCRIBBLE=1 FUGC_VERIFY=1",
+          :justRunScript => justRunScript,
+          :output => outputScribble},
+         {:script => subRunSTWScript,
+          :cmdPrefix => "FUGC_MIN_THRESHOLD=0 FUGC_STW=1",
+          :justRunScript => justRunScript,
+          :output => outputSTW},
+         {:script => subRunReleaseScript,
+          :cmdPrefix => "",
+          :justRunScript => justRunReleaseScript,
+          :output => outputRelease}].each {
+            | params |
+            File.open(params[:script], "w") {
+                | outp |
+                outp.puts "#!/bin/sh"
+                if expectedReturn == "crash"
+                    outp.puts "ulimit -c 0"
+                end
+                outp.puts "#{params[:cmdPrefix]} FILC_EXIT_ON_PANIC=1 FILC_DUMP_SETUP=1 #{Shellwords.shellescape(params[:justRunScript])} > #{Shellwords.shellescape(params[:output])} 2>&1"
+                case expectedReturn
+                when "failure"
+                    outp.puts "if [ $? -ne 42 ]"
+                when "crash"
+                    outp.puts "if [ $? -eq 0 ]"
+                when "success"
+                    outp.puts "if [ $? -ne 0 ]"
+                when "exit13"
+                    outp.puts "if [ $? -ne 13 ]"
+                when "dontCrash"
+                    outp.puts "if [ $? -ne 0 -a $? -ne 42 ]"
+                else
+                    raise
+                end
+                outp.puts "then"
+                case expectedReturn
+                when "failure"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected program to return failure"))
+                when "crash"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected program to crash"))
+                when "success"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected program to return success"))
+                when "exit13"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected program to return 13"))
+                when "dontCrash"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected program to return success or failure, but not crash"))
+                else
+                    raise
+                end
+                outp.puts "    cat #{Shellwords.shellescape(params[:output])}"
+                outp.puts "    exit 1"
+                outp.puts "fi"
+                expectedOutputs.each {
+                    | expectedOutput |
+                    outp.puts "grep -F -- #{Shellwords.shellescape(expectedOutput)} #{Shellwords.shellescape(params[:output])} > /dev/null || {"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected output to contain #{expectedOutput}"))
+                    outp.puts "    cat #{Shellwords.shellescape(params[:output])}"
+                    outp.puts "    exit 1"
+                    outp.puts "}"
+                }
+                forbiddenOutputs.each {
+                    | forbiddenOutput |
+                    outp.puts "grep -F -- #{Shellwords.shellescape(forbiddenOutput)} #{Shellwords.shellescape(params[:output])} > /dev/null && {"
+                    outp.puts("    echo " + Shellwords.shellescape(params[:script].to_s + ": FAIL: expected output to NOT contain #{forbiddenOutput}"))
+                    outp.puts "    cat #{Shellwords.shellescape(params[:output])}"
+                    outp.puts "    exit 1"
+                    outp.puts "}"
+                }
+                outp.puts ":"
+            }
+        }
+    end
+    File.open(runScript, "w") {
+        | outp |
+        outp.puts "#!/bin/sh"
+        outp.puts "set -e"
+        outp.puts "#{Shellwords.shellescape(compileScript)}"
+        if expectedReturn != "compileFailure" and expectedReturn != "compileOnly" and
+          expectedReturn != "linkFailure"
+            subRuns = manifest["subRuns"]
+            if not subRuns or subRuns["default"]
+                outp.puts "#{Shellwords.shellescape(subRunScript)}"
+            end
+            if not subRuns or subRuns["scribble"]
+                outp.puts "#{Shellwords.shellescape(subRunScribbleScript)}"
+            end
+            if not subRuns or subRuns["stw"]
+                outp.puts "#{Shellwords.shellescape(subRunSTWScript)}"
+            end
+            if not subRuns or subRuns["release"]
+                outp.puts "#{Shellwords.shellescape(subRunReleaseScript)}"
+            end
+        end
+    }
+    compileScript.chmod(0755)
+    if expectedReturn != "compileFailure" and expectedReturn != "compileOnly" and
+      expectedReturn != "linkFailure"
+        justRunScript.chmod(0755)
+        justRunReleaseScript.chmod(0755)
+        subRunScript.chmod(0755)
+        subRunScribbleScript.chmod(0755)
+        subRunSTWScript.chmod(0755)
+        subRunReleaseScript.chmod(0755)
+    end
+    runScript.chmod(0755)
+    if manifest["slow"]
+        $tests.unshift runScript
+    else
+        $tests << runScript
+    end
+}
+
+File.open("filc/tests/testmakefile", "w") {
+    | outp |
+    outp.print "all:"
+    $tests.each_with_index {
+        | test, index |
+        outp.print " .t#{index}"
+    }
+    outp.puts
+    $tests.each_with_index {
+        | test, index |
+        outp.puts ".t#{index}:"
+        if $verbose
+            outp.puts "\t@#{Shellwords.shellescape(test)}"
+            outp.puts "\t@echo #{test}: success"
+        else
+            outp.puts "\t@#{Shellwords.shellescape(test)}"
+            outp.puts "\t@echo -n ."
+        end
+    }
+}
+
+if $runTests
+    raise unless system("#{$make} -k -f filc/tests/testmakefile -j #{Etc.nprocessors}")
+    puts "SUCCESS"
+end
+
+

@@ -1,0 +1,11 @@
+return:
+  failure
+libraries:
+  libfoo.so:
+    isBundle: true
+    files:
+      - foo.cpp
+optFlags:
+  "-O2 -fPIC"
+output-includes:
+  "libc++abi: terminating due to uncaught exception of type MyException"

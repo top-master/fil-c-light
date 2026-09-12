@@ -1,0 +1,13 @@
+return:
+  success
+libraries:
+  libfoo.so:
+    isBundle: true
+    files:
+      - foo.cpp
+  libbar.so:
+    isBundle: true
+    files:
+      - bar.cpp
+optFlags:
+  "-O2 -fPIC"

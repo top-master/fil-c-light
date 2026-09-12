@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon rep end exact test passed!"
+only-on-platform:
+  aarch64

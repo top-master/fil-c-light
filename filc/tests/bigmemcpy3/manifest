@@ -1,0 +1,5 @@
+return:
+  failure
+output-includes:
+  - "filc safety error"
+  - "3722304989 bytes when upper - ptr = 64"

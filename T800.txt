@@ -1,0 +1,40 @@
+You're in a container that has a Fil-C git checkout. See README.md for a summary of Fil-C.
+
+The development flow is:
+
+- `./build_base.sh` builds Fil-C. This builds the compiler (clang/ and llvm/; most importantly llvm/lib/Transforms/Instrumentation/FilPizlonator.cpp), yolo libc (projects/yolomusl/), runtime (libpas/; most importantly libpas/src/libpas/filc_* and libpas/src/libpas/fugc*; but also filc/src/*), user libc (projects/usermusl/), and libcxx/libcxxabi. This can take a while. Half an hour is not unheard of.
+
+- `filc/run-tests` runs the tests. The tests are in `filc/tests/`. This can also take a while. Half an hour is not unheard of. There are many tests and they are super comprehensive! You can run `filc/run-tests -t <testname>` to run exactly one test. You can run `filc/run-tests -f <filter>` to run tests that match a filter. If you're grinding on making some test pass, be sure to use the `-t` or `-f` options so you're not running the whole test suite just to test one test.
+
+- `./build_all_fast.sh` builds Fil-C and runs tests. This can take a while; maybe up to an hour. This is what you usually run when you make a change and want to see if it works. After you complete any change, make sure you run `./build_all_fast.sh`! You're never done until you confirm that this runs to completion! Reason: this does a full build (equivalent to `./build_base.sh`) and a full test pass (equivalent to `filc/run-tests`).
+
+- There are other build scripts as well, but many of them will not run in your container environment, or are just not interesting for your workflow - so you should mostly ignore them. It might be worth your time to read how `build_base.sh` invokes other scripts and what those scripts do. Sometimes, if you know you only changed the compiler, you can just run `./build_clang.sh` to rebuild the compiler. Or, if you know you only changed the runtime, you can just run `./build_runtime.sh`.
+
+Once you have a build, you can run `build/bin/clang` or `build/bin/clang++` to build and link programs. For example, `build/bin/clang -o hello hello.c` is enough to build a program. The compiler is smart enough to find all of the libraries it needs.
+
+Sarcasm, the pizlonating assembler that clang uses for `.s` files by default (`-yolo-assembler` opts out), is developed in `projects/sarcasm/` (Luau sources, run by minilute), but it is installed into `pizfix/`: `./build_sarcasm.sh` copies the sources to `pizfix/lib/sarcasm/` and writes the `pizfix/bin/sarcasm` launcher, and that installed copy, not the sources in `projects/sarcasm/`, is what `build/bin/clang` and `filc/run-tests` actually execute. Therefore, after editing anything in `projects/sarcasm/`, you must run `./build_sarcasm.sh` before testing; just editing the sources is not enough. The sarcasm tests live in `filc/tests/sarcasm-*`; run them with `filc/run-tests -f sarcasm`, or `-t <testname>` for exactly one. If you only changed the compiler side (e.g. the driver's SarcasmAs tool), `./build_clang.sh` rebuilds just clang. As always, `./build_all_fast.sh` is the final gate for any change, including sarcasm changes.
+
+The compiler's build (as well as the build of some of the compiler runtime bits) lives in `build/`. The Fil-C runtime's build and the libc builds live in `pizfix/`.
+
+Fil-C is fanatically compatible with C/C++ and completely memory safe. There's no such thing as "sometimes an error didn't get caught"; every behavior that is unsafe in C/C++ is either given safe semantics or results in a panic.
+
+This requires breaking ABI compatibility. Hence, Fil-C creates a userland that includes its own libc - which is really just musl with some modifications. Fil-C also has its own build of libcxx and libcxxabi. To use any other library, you need to build it with Fil-C. (It's also possible to use Fil-C with glibc, but let's not worry about that for now.)
+
+The Fil-C runtime is mostly written in Yolo-C (what we call regular C) and also relies on libc (though mostly just for syscalls). Hence why a Fil-C build includes a libc sandwich: a user libc built with Fil-C that sits on top of the Fil-C runtime, which then sits on top of a yolo libc built with Yolo-C.
+
+Remember: if you're done making a Fil-C change, make sure to run `./build_all_fast.sh`! If this does not pass, then you're not done.
+
+Some pitfalls to consider:
+
+- DO NOT try to list all files in filc/tests directly; use run_bash to list files that match some pattern. DO NOT run grep or rg commands on filc/tests without restricting which subdirectories it looks at, since the results will be massive otherwise.
+- DO NOT try to read the entire FilPizlonator.cpp, filc_runtime.h, or filc_runtime.c files directly. Always spawn a subagent to do it and summarize, or read only those pieces of those files that you're interested in.
+- DO NOT run ninja commands directly in the LLVM `build`. Use ./build_base.sh to build everything, ./build_all_fast.sh to build and test everything, and if you want to build clang directly, use ./build_clang.sh. Or if you change files in libpas/ and you want to just rebuild the runtime, use ./build_runtime.sh
+- Fil-C tests DO NOT use LLVM's testing infrastructure (like lit). Do not try to run lit. Use filc/run-tests.
+- When using `filc/run-test -t`, note that this runs exactly one test. Supplying `-t` multiple times means only the last test specified runs!
+- Make sure that `filc/run-tests` passes when reviewing your finished work. Running it with flags like `-f` and `-t` to run just some tests is not enough unless you are just doing testing for a subtask of your overall assignment. Do not report to the user that your staged work is ready for commit until you know that `filc/run-tests` (with no arguments) passes! Note that running `./build_all_fast.sh` runs `filc/run-tests`, so if you already ran `./build_all_fast.sh` and it succeeded (exit code 0) then you have already also run `filc/run-tests` and that must have succeeded.
+- `filc/run-tests` is quite slow. If you want to examine its output, then run it with the output piped to a file, and then examine that file. Don't rerun it a bunch of times with different grep commands or whatnot. Also, the output is going to just be a '.' for each successful test, "SUCCESS" at the end if successfull, and more detailed output spew interleaved with the '.''s of successful tests if there is a failure. If `filc/run-tests` returns 0 then you know that all tests passed.
+- DO NOT edit .gitignore. You will see lots of untracked files. Most likely, those files are intended to be untracked. Do not worry about the git status of pre-existing untracked files.
+- All Fil-C allocations are rounded up to 16 bytes and have at least 16 bytes alignment. So, for example, `int x; (&x)[1]++;` is valid in Fil-C because offset 4 in the `int x` is within bounds of that 16-byte allocation.
+
+Note that CLAUDE.md, README.md, and Manifesto.md have more information. However, if instructions in those docs contradict anything in this doc, then this doc takes precedence.
+

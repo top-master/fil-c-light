@@ -1,0 +1,4 @@
+return:
+  compileFailure
+only-on-platform:
+  aarch64

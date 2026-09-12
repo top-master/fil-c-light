@@ -1,0 +1,9 @@
+v1 {
+    global: pizlonated_foo;
+    local: *;
+};
+
+v2 {
+    global: pizlonated_foo;
+} v1;
+

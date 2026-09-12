@@ -1,0 +1,6 @@
+return:
+  success
+output-includes:
+  - "neon ld4q dup u8 exact test passed!"
+only-on-platform:
+  aarch64

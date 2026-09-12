@@ -1,0 +1,9 @@
+return:
+  success
+extraArgs:
+  - "11"
+output-includes:
+  - "556355"
+  - "Pfannkuchen(11) = 51"
+only-on-platform:
+  x86_64
