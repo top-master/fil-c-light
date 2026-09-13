@@ -87,3 +87,11 @@ pythonenv*
 *.projeny.status
 pizlonated-*.tar.gz
 
+/.filc-light-tools/
+/tmp-build/
+/pizfix/
+/pizlonated-*-build/
+/llvm
+/clang
+/cmake
+/dist/

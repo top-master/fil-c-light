@@ -28,6 +28,14 @@
 set -e
 set -x
 
+# filc-light ships the runtime + libcs but not the libxcrypt companion source.
+# When it is absent, skip gracefully (libcrypt is optional for the core toolchain)
+# rather than failing the whole build.
+if [ ! -d projects/libxcrypt-4.5.2 ]; then
+  echo "build_xcrypt: projects/libxcrypt-4.5.2 not present in this tree; skipping libcrypt."
+  exit 0
+fi
+
 cd projects/libxcrypt-4.5.2
 extract_source
 CC=$PWD/../../../build/bin/clang ./configure --prefix=$PWD/../../../pizfix
