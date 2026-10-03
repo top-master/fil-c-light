@@ -66,7 +66,9 @@ then
     exit 1
 fi
 
-build_name=$build_name_base-0.686-$OS-$ARCH
+# Fil-C-Light: PACKAGE_VERSION is the upstream release the tree is based on (build.sh's
+# filc_upstream_version, from its tags); upstream spells its own version out here.
+build_name=$build_name_base-${PACKAGE_VERSION:-0.686}-$OS-$ARCH
 
 rm -rf $build_name
 
@@ -77,7 +79,9 @@ cp libpas/LICENSE.txt $build_name/PAS-LICENSE.txt
 cp projects/usermusl/COPYRIGHT $build_name/MUSL-LICENSE.txt
 
 mkdir -p $build_name/build/bin
-cp build/bin/clang-20 $build_name/build/bin/
+# Fil-C-Light: PACKAGE_CLANG is the clang to pack, when build/bin holds another one (a
+# foreign arch's build folder holds this machine's clang there, aimed at the arch).
+cp ${PACKAGE_CLANG:-build/bin/clang-20} $build_name/build/bin/clang-20
 strip $build_name/build/bin/clang-20
 (cd $build_name/build/bin/ &&
      ln -s clang-20 clang &&
@@ -101,6 +105,12 @@ then
 fi
 mkdir -p $build_name/build/lib/clang/20/
 cp -R build/lib/clang/20/include $build_name/build/lib/clang/20/
+# Fil-C-Light: build/share holds the Fil-C-Light marker (fil-c-light.ini, see build.sh's
+# filc_light_stamp), which tells this toolchain from an upstream one.
+if test -d build/share
+then
+    cp -R build/share $build_name/build/
+fi
 
 cp -R pizfix $build_name/
 rm -f $build_name/pizfix/etc/moduli
@@ -232,5 +242,6 @@ chmod 755 setup.sh
 
 cd ..
 
-tar -cJvf $build_name.tar.xz $build_name
+# Fil-C-Light: named .xz, like its other packages.
+tar -cJvf $build_name.xz $build_name
 
