@@ -95,3 +95,20 @@ pizlonated-*.tar.gz
 /clang
 /cmake
 /dist/
+
+#==============================================================================#
+# Object files and static libraries are build output (from-source builds run in
+# ../build/<tree name>, but an in-tree build of an upstream script leaves them
+# too). The archives glibc ships in its htl/ sources stay tracked.
+#==============================================================================#
+*.o
+*.a
+!/projects/*-glibc-*/htl/*.a
+
+# Generated while building in the tree itself (the build folder gets them now):
+# libpas's forwarders come from generate_pizlonated_forwarders.rb, the glibc
+# configure scripts from autoconf over the tracked configure.ac.
+/libpas/fake_c_file.c
+/libpas/src/libpas/filc_native.h
+/libpas/src/libpas/filc_native_forwarders.c
+/projects/*-glibc-*/configure
