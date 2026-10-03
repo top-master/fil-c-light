@@ -88,6 +88,7 @@ pythonenv*
 pizlonated-*.tar.gz
 
 /.filc-light-tools/
+/optfil/
 /tmp-build/
 /pizfix/
 /pizlonated-*-build/
