@@ -177,8 +177,8 @@ $(objpfx)tst-gettext5.out: $(objpfx)tst-gettext.out
 $(objpfx)tst-gettext6.out: $(objpfx)tst-gettext.out
 $(objpfx)tst-plural-eval.out: $(objpfx)tst-gettext.out
 
-CPPFLAGS += -D'LOCALEDIR="$(localedir)"' \
-	    -D'LOCALE_ALIAS_PATH="$(localedir)"' \
+CPPFLAGS += -D'LOCALEDIR="$(call binary-root-path,$(localedir))"' \
+	    -D'LOCALE_ALIAS_PATH="$(call binary-root-path,$(localedir))"' \
 	    -Wno-unused-but-set-variable \
 	    -Wno-implicit-fallthrough
 BISONFLAGS = --yacc --no-lines --name-prefix=__gettext --output

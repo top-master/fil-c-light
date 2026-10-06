@@ -526,8 +526,9 @@ DCIGETTEXT (const char *domainname, const char *msgid1, const char *msgid2,
 	}
     }
 
-  if (binding == NULL)
-    dirname = _nl_default_dirname;
+  if (binding == NULL || binding->dirname == _nl_default_dirname)
+    /* The default folder, "=<path from the root>" (see binary-root.c).  */
+    dirname = BINARY_ROOT_PATH (_nl_default_dirname);
   else
     {
       dirname = binding->dirname;

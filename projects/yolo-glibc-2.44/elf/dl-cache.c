@@ -418,7 +418,7 @@ _dl_check_ldsocache_needs_loading (void)
      to NULL in the interim so that would be detected.  */
   if (copy_old_time)
     cache_file_time = new_cache_file_time;
-  rv = __fstatat64_time64 (AT_FDCWD, LD_SO_CACHE, &new_cache_file_stat, 0);
+  rv = __fstatat64_time64 (AT_FDCWD, BINARY_ROOT_PATH (LD_SO_CACHE), &new_cache_file_stat, 0);
   copy_old_time = (rv >= 0);
 
   /* No file to load, but there used to be.  Assume user intentionally
@@ -463,7 +463,7 @@ _dl_maybe_load_ldsocache (void)
   size_t tmp_cachesize = 0;
 
   /* Read the contents of the file.  */
-  void *file = _dl_sysdep_read_whole_file (LD_SO_CACHE, &tmp_cachesize,
+  void *file = _dl_sysdep_read_whole_file (BINARY_ROOT_PATH (LD_SO_CACHE), &tmp_cachesize,
 					   PROT_READ);
 
   /* We can handle three different cache file formats here:
@@ -558,7 +558,7 @@ _dl_load_cache_lookup (const char *name)
 {
   /* Print a message if the loading of libs is traced.  */
   if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_LIBS))
-    _dl_debug_printf (" search cache=%s\n", LD_SO_CACHE);
+    _dl_debug_printf (" search cache=%s\n", BINARY_ROOT_PATH (LD_SO_CACHE));
 
   if (_dl_check_ldsocache_needs_loading ())
     _dl_maybe_load_ldsocache ();

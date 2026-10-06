@@ -36,7 +36,13 @@ cd ../..
 rm -rf pizlonated-user-glibc-build
 mkdir pizlonated-user-glibc-build
 cd pizlonated-user-glibc-build
-CC="$PWD/../build/bin/clang -nodefaultlibs -yolo-assembler -Wno-ignored-attributes -Wno-pointer-sign -Wno-unused-command-line-argument -Wno-macro-redefined" CXX="$PWD/../build/bin/clang++ -nostdlibinc -Wno-ignored-attributes -Wno-pointer-sign" ../projects/user-glibc-2.44/configure --prefix=$PWD/../pizfix --disable-mathvec
+CC="$PWD/../build/bin/clang -nodefaultlibs -yolo-assembler -Wno-ignored-attributes -Wno-pointer-sign -Wno-unused-command-line-argument -Wno-macro-redefined" CXX="$PWD/../build/bin/clang++ -nostdlibinc -Wno-ignored-attributes -Wno-pointer-sign" ../projects/user-glibc-2.44/configure --prefix=/opt/fil --disable-mathvec
+# Fil-C-Light: the prefix is /opt/fil, where upstream installs it, while every path below
+# it is found at run time (see projects/binary-root.c); this tree installs it into pizfix/
+# through install_root, whose opt/fil is that folder.
+mkdir -p ../pizfix install-root/opt
+ln -sfn ../../../pizfix install-root/opt/fil
+echo "install_root = $PWD/install-root" > configparms
 make -j $NCPU
 make -j $NCPU install
 

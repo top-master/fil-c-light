@@ -16,8 +16,10 @@
 # License along with the GNU C Library; if not, see
 # <https://www.gnu.org/licenses/>.
 
-memusageso='@SLIBDIR@/libmemusage.so'
-memusagestat='@BINDIR@/memusagestat'
+# The installation's prefix, from this script's own folder (its bin/).
+prefix=$(cd "$(dirname -- "$0")/.." && pwd)
+memusageso="$prefix"'@SLIBDIR@/libmemusage.so'
+memusagestat="$prefix"'@BINDIR@/memusagestat'
 TEXTDOMAIN=libc
 
 # Print usage message.

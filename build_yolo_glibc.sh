@@ -34,5 +34,11 @@ autoconf
 cd ../..
 rm -rf pizlonated-yolo-glibc-build
 mkdir pizlonated-yolo-glibc-build
-(cd pizlonated-yolo-glibc-build && ../projects/yolo-glibc-2.44/configure --prefix=$PWD/../pizfix/yolo --disable-mathvec)
+# Fil-C-Light: the prefix is /opt/fil, where upstream installs it, while every path below
+# it is found at run time (see projects/binary-root.c); this tree installs it into
+# pizfix/yolo through install_root (see configparms), whose opt/fil is that folder.
+(cd pizlonated-yolo-glibc-build && ../projects/yolo-glibc-2.44/configure --prefix=/opt/fil --disable-mathvec)
+mkdir -p pizfix/yolo pizlonated-yolo-glibc-build/install-root/opt
+ln -sfn ../../../pizfix/yolo pizlonated-yolo-glibc-build/install-root/opt/fil
+echo "install_root = $PWD/pizlonated-yolo-glibc-build/install-root" > pizlonated-yolo-glibc-build/configparms
 ./build_yolo_glibc_incremental.sh

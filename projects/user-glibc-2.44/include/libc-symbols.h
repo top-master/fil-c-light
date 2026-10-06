@@ -829,5 +829,21 @@
 # define _GL_ATTRIBUTE_CONST /* empty */
 #endif
 
+#ifndef __ASSEMBLER__
+/* The root of the installation, found from the binary that holds this code instead of
+   written in at build time (see binary-root.c): DEPTH_LEVEL folders above that
+   binary's folder.  */
+extern const char *__binary_root (int depth_level);
+extern const char *__binary_root_join (int depth_level, const char *paths);
+
+/* PATHS, a path or a ':'-separated list of them, where each one below the root is
+   written "=<path from the root>", made absolute below the root found at run time
+   (cached by __binary_root_join, so asking again costs a lookup).  The binary that
+   finds the root is one folder below it: libc and the loader are in lib/ (and libc's
+   programs ask libc).  */
+# define BINARY_ROOT_PATH(paths) \
+  (__binary_root_join (1, (paths)) ?: (paths) + ((paths)[0] == '='))
+#endif
+
 #endif /* !_ISOMAC */
 #endif /* libc-symbols.h */

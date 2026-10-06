@@ -339,12 +339,13 @@ enlarge_archive (struct locarhandle *ah, const struct locarhead *head)
   struct namehashent *oldnamehashtab;
   struct locarhandle new_ah;
   size_t prefix_len = output_prefix ? strlen (output_prefix) : 0;
-  char archivefname[prefix_len + sizeof (ARCHIVE_NAME)];
-  char fname[prefix_len + sizeof (ARCHIVE_NAME) + sizeof (".XXXXXX") - 1];
+  const char *archive_name = BINARY_ROOT_PATH (ARCHIVE_NAME);
+  char archivefname[prefix_len + strlen (archive_name) + 1];
+  char fname[prefix_len + strlen (archive_name) + sizeof (".XXXXXX")];
 
   if (output_prefix)
     memcpy (archivefname, output_prefix, prefix_len);
-  strcpy (archivefname + prefix_len, ARCHIVE_NAME);
+  strcpy (archivefname + prefix_len, archive_name);
   strcpy (stpcpy (fname, archivefname), ".XXXXXX");
 
   /* Not all of the old file has to be mapped.  Change this now this
@@ -562,7 +563,8 @@ open_archive (struct locarhandle *ah, bool readonly)
   struct locarhead head;
   int retry = 0;
   size_t prefix_len = output_prefix ? strlen (output_prefix) : 0;
-  char default_fname[prefix_len + sizeof (ARCHIVE_NAME)];
+  const char *archive_name = BINARY_ROOT_PATH (ARCHIVE_NAME);
+  char default_fname[prefix_len + strlen (archive_name) + 1];
   const char *archivefname = ah->fname;
 
   /* If ah has a non-NULL fname open that otherwise open the default.  */
@@ -571,7 +573,7 @@ open_archive (struct locarhandle *ah, bool readonly)
       archivefname = default_fname;
       if (output_prefix)
         memcpy (default_fname, output_prefix, prefix_len);
-      strcpy (default_fname + prefix_len, ARCHIVE_NAME);
+      strcpy (default_fname + prefix_len, archive_name);
     }
 
   while (1)

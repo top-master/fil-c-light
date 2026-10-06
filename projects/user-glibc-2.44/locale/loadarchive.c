@@ -42,7 +42,7 @@
 
 
 /* Name of the locale archive file.  */
-static const char archfname[] = COMPLOCALEDIR "/locale-archive";
+#define archfname BINARY_ROOT_PATH (COMPLOCALEDIR "/locale-archive")
 
 /* Size of initial mapping window, optimal if large enough to
    cover the header plus the initial locale.  */

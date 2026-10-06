@@ -442,7 +442,8 @@ System's directory for character maps : %s\n\
 		       repertoire maps: %s\n\
 		       locale path    : %s\n\
 %s"),
-		    CHARMAP_PATH, REPERTOIREMAP_PATH, LOCALE_PATH, tp);
+		    BINARY_ROOT_PATH (CHARMAP_PATH), BINARY_ROOT_PATH (REPERTOIREMAP_PATH),
+		    BINARY_ROOT_PATH (LOCALE_PATH), tp);
       free (tp);
       return cp;
     default:
@@ -513,10 +514,10 @@ construct_output_path (char *path)
 
       if (normal == NULL)
 	result = xasprintf ("%s%s/%s/", output_prefix ?: "",
-			    COMPLOCALEDIR, path);
+			    BINARY_ROOT_PATH (COMPLOCALEDIR), path);
       else
 	result = xasprintf ("%s%s/%.*s%s%s/",
-			    output_prefix ?: "", COMPLOCALEDIR,
+			    output_prefix ?: "", BINARY_ROOT_PATH (COMPLOCALEDIR),
 			    (int) (startp - path), path, normal, endp ?: "");
       /* Free the allocated normalized codeset name.  */
       free (normal);

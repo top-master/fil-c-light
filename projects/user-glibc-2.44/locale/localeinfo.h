@@ -338,7 +338,8 @@ _nl_lookup_word (locale_t l, int category, int item)
 }
 
 /* Default search path if no LOCPATH environment variable.  */
-extern const char _nl_default_locale_path[] attribute_hidden;
+/* The default locale path, below the root of the installation (see binary-root.c).  */
+#define _nl_default_locale_path BINARY_ROOT_PATH (COMPLOCALEDIR)
 
 /* Load the locale data for CATEGORY from the file specified by *NAME.
    If *NAME is "", use environment variables as specified by POSIX, and

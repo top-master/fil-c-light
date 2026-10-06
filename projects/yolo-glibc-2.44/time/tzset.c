@@ -392,7 +392,7 @@ tzset_internal (int always)
 
   if (tz == NULL)
     /* No user specification; use the site-wide default.  */
-    tz = TZDEFAULT;
+    tz = BINARY_ROOT_PATH (TZDEFAULT);
 
   tz_rules[0].name = NULL;
   tz_rules[1].name = NULL;
@@ -409,7 +409,7 @@ tzset_internal (int always)
   /* No data file found.  Default to UTC if nothing specified.  */
 
   if (tz == NULL || *tz == '\0'
-      || (TZDEFAULT != NULL && strcmp (tz, TZDEFAULT) == 0))
+      || strcmp (tz, BINARY_ROOT_PATH (TZDEFAULT)) == 0)
     {
       memset (tz_rules, '\0', sizeof tz_rules);
       tz_rules[0].name = tz_rules[1].name = "UTC";

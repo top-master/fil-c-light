@@ -318,6 +318,8 @@ char *
 BINDTEXTDOMAIN (const char *domainname, const char *dirname)
 {
   set_binding_values (domainname, &dirname, NULL);
+  if (dirname == _nl_default_dirname)
+    dirname = BINARY_ROOT_PATH (_nl_default_dirname);
   return (char *) dirname;
 }
 

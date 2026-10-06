@@ -35,7 +35,6 @@
 #include <gconv_parseconfdir.h>
 
 /* This is the default path where we look for module lists.  */
-static const char default_gconv_path[] = GCONV_PATH;
 
 /* Type to represent search path.  */
 struct path_elem
@@ -370,13 +369,15 @@ __gconv_get_path (void)
   int nelems;
   char *cwd;
   size_t cwdlen;
+  const char *default_gconv_path = BINARY_ROOT_PATH (GCONV_PATH);
+  size_t default_gconv_path_size = strlen (default_gconv_path) + 1;
 
   if (__gconv_path_envvar == NULL)
     {
       /* No user-defined path.  Make a modifiable copy of the
          default path.  */
       gconv_path = strdupa (default_gconv_path);
-      gconv_path_len = sizeof (default_gconv_path);
+      gconv_path_len = default_gconv_path_size;
       cwd = NULL;
       cwdlen = 0;
     }
@@ -385,16 +386,15 @@ __gconv_get_path (void)
       /* Append the default path to the user-defined path.  */
       size_t user_len = strlen (__gconv_path_envvar);
 
-      gconv_path_len = user_len + 1 + sizeof (default_gconv_path);
+      gconv_path_len = user_len + 1 + default_gconv_path_size;
       gconv_path = alloca (gconv_path_len);
       __mempcpy (__mempcpy (__mempcpy (gconv_path, __gconv_path_envvar,
                                        user_len),
                             ":", 1),
-                 default_gconv_path, sizeof (default_gconv_path));
+                 default_gconv_path, default_gconv_path_size);
       cwd = __getcwd (NULL, 0);
       cwdlen = __glibc_unlikely (cwd == NULL) ? 0 : strlen (cwd);
     }
-  assert (default_gconv_path[0] == '/');
 
   /* In a first pass we calculate the number of elements.  */
   oldp = NULL;

@@ -63,8 +63,8 @@ $(objpfx)version.h: $(common-objpfx)config.make
 	    > $@.new
 	mv -f $@.new $@
 
-tz-cflags = -DTZDIR='"$(zonedir)"' \
-	    -DTZDEFAULT='"$(localtime-file)"' \
+tz-cflags = -DTZDIR='"$(call binary-root-path,$(zonedir))"' \
+	    -DTZDEFAULT='"$(call binary-root-path,$(localtime-file))"' \
 	    -DTZDEFRULES='"$(posixrules-file)"' \
 	    -DTM_GMTOFF=tm_gmtoff -DTM_ZONE=tm_zone \
 	    -DHAVE_GETTEXT -DUSE_LTZ=0 -DTZ_DOMAIN='"libc"' \
@@ -136,7 +136,7 @@ $(testdata)/XT5: testdata/gen-XT5.sh
 	mv $@.tmp $@
 
 $(objpfx)tzselect: tzselect.ksh $(common-objpfx)config.make
-	sed -e 's|TZDIR=[^}]*|TZDIR=$(zonedir)|' \
+	sed -e 's|TZDIR=[^}]*|TZDIR=$$(cd "$$(dirname -- "$$0")/.." \&\& pwd)$(patsubst $(prefix)%,%,$(zonedir))|' \
 	    -e '/TZVERSION=/s|see_Makefile|"$(version)"|' \
 	    -e '/PKGVERSION=/s|=.*|="$(PKGVERSION)"|' \
 	    -e '/REPORT_BUGS_TO=/s|=.*|="$(REPORT_BUGS_TO)"|' \

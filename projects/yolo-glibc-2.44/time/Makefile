@@ -132,8 +132,8 @@ $(objpfx)tst-clock_gettime-time64: $(librt)
 $(objpfx)tst-clock_nanosleep: $(librt)
 $(objpfx)tst-clock_nanosleep-time64: $(librt)
 
-tz-cflags = -DTZDIR='"$(zonedir)"' \
-	    -DTZDEFAULT='"$(localtime-file)"' \
+tz-cflags = -DTZDIR='"$(call binary-root-path,$(zonedir))"' \
+	    -DTZDEFAULT='"$(call binary-root-path,$(localtime-file))"' \
 	    -DTZDEFRULES='"$(posixrules-file)"'
 
 CFLAGS-tzfile.c += $(tz-cflags)

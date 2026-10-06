@@ -1251,17 +1251,20 @@ main (int argc, char **argv)
 	}
     }
 
+  /* The default files are below the root of this installation, found at run time
+     (see binary-root.c).  */
   if (cache_file == NULL)
     {
-      cache_file = alloca (strlen (LD_SO_CACHE) + 1);
-      strcpy (cache_file, LD_SO_CACHE);
+      const char *cache = BINARY_ROOT_PATH (LD_SO_CACHE);
+      cache_file = alloca (strlen (cache) + 1);
+      strcpy (cache_file, cache);
     }
 
   if (config_file == NULL)
-    config_file = LD_SO_CONF;
+    config_file = BINARY_ROOT_PATH (LD_SO_CONF);
 
   if (tunconfig_file == NULL)
-    tunconfig_file = TUNABLES_CONF;
+    tunconfig_file = BINARY_ROOT_PATH (TUNABLES_CONF);
 
   if (opt_print_cache)
     {
@@ -1324,12 +1327,12 @@ main (int argc, char **argv)
       ldconfig_parse_config (config_file, opt_chroot, add_dir_callback);
 
       /* Always add the standard search paths.  */
-      add_system_dir (SLIBDIR);
+      add_system_dir (BINARY_ROOT_PATH (SLIBDIR));
       if (strcmp (SLIBDIR, LIBDIR))
-	add_system_dir (LIBDIR);
+	add_system_dir (BINARY_ROOT_PATH (LIBDIR));
     }
 
-  const char *aux_cache_file = _PATH_LDCONFIG_AUX_CACHE;
+  const char *aux_cache_file = BINARY_ROOT_PATH (_PATH_LDCONFIG_AUX_CACHE);
   if (opt_chroot != NULL)
     aux_cache_file = chroot_canon (opt_chroot, aux_cache_file);
 
