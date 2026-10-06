@@ -125,7 +125,7 @@ charmap_read (const char *filename, int verbose, int error_not_found,
 
 	      if (cmfile == NULL)
 		/* Try the default directory.  */
-		cmfile = cmlr_open (CHARMAP_PATH, filename, charmap_hash);
+		cmfile = cmlr_open (BINARY_ROOT_PATH (CHARMAP_PATH), filename, charmap_hash);
 	    }
 	}
 
@@ -145,7 +145,7 @@ charmap_read (const char *filename, int verbose, int error_not_found,
 	 file name.  */
       CHARMAP_DIR *dir;
 
-      dir = charmap_opendir (CHARMAP_PATH);
+      dir = charmap_opendir (BINARY_ROOT_PATH (CHARMAP_PATH));
       if (dir != NULL)
 	{
 	  const char *dirent;
@@ -156,7 +156,7 @@ charmap_read (const char *filename, int verbose, int error_not_found,
 	      char **p;
 	      int found;
 
-	      aliases = charmap_aliases (CHARMAP_PATH, dirent);
+	      aliases = charmap_aliases (BINARY_ROOT_PATH (CHARMAP_PATH), dirent);
 	      found = 0;
 	      for (p = aliases; *p; p++)
 		if (strcasecmp (*p, filename) == 0)
@@ -170,7 +170,7 @@ charmap_read (const char *filename, int verbose, int error_not_found,
 		{
 		  struct linereader *cmfile;
 
-		  cmfile = cmlr_open (CHARMAP_PATH, dirent, charmap_hash);
+		  cmfile = cmlr_open (BINARY_ROOT_PATH (CHARMAP_PATH), dirent, charmap_hash);
 		  if (cmfile != NULL)
 		    result = parse_charmap (cmfile, verbose, be_quiet);
 
@@ -186,7 +186,7 @@ charmap_read (const char *filename, int verbose, int error_not_found,
     {
       struct linereader *cmfile;
 
-      cmfile = cmlr_open (CHARMAP_PATH, DEFAULT_CHARMAP, charmap_hash);
+      cmfile = cmlr_open (BINARY_ROOT_PATH (CHARMAP_PATH), DEFAULT_CHARMAP, charmap_hash);
       if (cmfile != NULL)
 	result = parse_charmap (cmfile, verbose, be_quiet);
 

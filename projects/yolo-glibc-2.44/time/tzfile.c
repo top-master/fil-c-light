@@ -105,7 +105,7 @@ decode64 (const void *ptr)
 void
 __tzfile_read (const char *file, size_t extra, char **extrap)
 {
-  static const char default_tzdir[] = TZDIR;
+  const char *default_tzdir = BINARY_ROOT_PATH (TZDIR);
   size_t num_isstd, num_isgmt;
   FILE *f;
   struct tzhead tzhead;
@@ -122,7 +122,7 @@ __tzfile_read (const char *file, size_t extra, char **extrap)
 
   if (file == NULL)
     /* No user specification; use the site-wide default.  */
-    file = TZDEFAULT;
+    file = BINARY_ROOT_PATH (TZDEFAULT);
   else if (*file == '\0')
     /* User specified the empty string; use UTC with no leap seconds.  */
     goto ret_free_transitions;
@@ -134,8 +134,8 @@ __tzfile_read (const char *file, size_t extra, char **extrap)
 	 and which is not the system wide default TZDEFAULT.  */
       if (__libc_enable_secure
 	  && ((*file == '/'
-	       && strcmp (file, TZDEFAULT) != 0
-	       && (strncmp (file, default_tzdir, sizeof (default_tzdir) - 1)
+	       && strcmp (file, BINARY_ROOT_PATH (TZDEFAULT)) != 0
+	       && (strncmp (file, default_tzdir, strlen (default_tzdir))
 		   != 0))
 	      || strstr (file, "../") != NULL))
 	/* This test is certainly a bit too restrictive but it should

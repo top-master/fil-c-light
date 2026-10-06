@@ -99,7 +99,7 @@ print_search_path_for_help (struct dl_main_state *state)
     print_search_path_for_help_1 (map->l_runpath_dirs.dirs);
 
   if (!GLRO(dl_inhibit_cache))
-    _dl_printf ("  (libraries located via %s)\n", LD_SO_CACHE);
+    _dl_printf ("  (libraries located via %s)\n", BINARY_ROOT_PATH (LD_SO_CACHE));
 
   print_search_path_for_help_1 (__rtld_search_dirs.dirs);
 }
@@ -184,7 +184,7 @@ setting environment variables (which would be inherited by subprocesses).\n\
   --list                list all dependencies and how they are resolved\n\
   --verify              verify that given object really is a dynamically linked\n\
                         object we can handle\n\
-  --inhibit-cache       Do not use " LD_SO_CACHE "\n\
+  --inhibit-cache       Do not use %s\n\
   --library-path PATH   use given PATH instead of content of the environment\n\
                         variable LD_LIBRARY_PATH\n\
   --glibc-hwcaps-prepend LIST\n\
@@ -201,9 +201,9 @@ setting environment variables (which would be inherited by subprocesses).\n\
   --help                display this help and exit\n\
   --version             output version information and exit\n\
 \n\
-This program interpreter self-identifies as: " RTLD "\n\
+This program interpreter self-identifies as: %s\n\
 ",
-              argv0);
+              argv0, BINARY_ROOT_PATH (LD_SO_CACHE), BINARY_ROOT_PATH (RTLD));
   print_search_path_for_help (state);
   print_hwcaps_subdirectories (state);
   _exit (EXIT_SUCCESS);

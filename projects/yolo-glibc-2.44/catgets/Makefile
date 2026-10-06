@@ -70,7 +70,7 @@ include ../gen-locales.mk
 
 $(objpfx)gencat: $(gencat-modules:%=$(objpfx)%.o)
 
-catgets-CPPFLAGS := -DNLSPATH='"$(localedir)/%L/%N:$(localedir)/%L/LC_MESSAGES/%N:$(localedir)/%l/%N:$(localedir)/%l/LC_MESSAGES/%N:"'
+catgets-CPPFLAGS := -DNLSPATH='"$(call binary-root-path,$(localedir)/%L/%N:$(localedir)/%L/LC_MESSAGES/%N:$(localedir)/%l/%N:$(localedir)/%l/LC_MESSAGES/%N:)"'
 
 generated += \
   de.msg \

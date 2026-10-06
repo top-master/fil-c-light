@@ -48,7 +48,12 @@
 #define FLAG_LARCH_FLOAT_ABI_DOUBLE	0x1200
 
 /* Name of auxiliary cache.  */
-#define _PATH_LDCONFIG_AUX_CACHE "/var/cache/ldconfig/aux-cache"
+/* Below the root of the installation (see binary-root.c), as the build writes it.  */
+#ifdef LDCONFIG_AUX_CACHE
+# define _PATH_LDCONFIG_AUX_CACHE LDCONFIG_AUX_CACHE
+#else
+# define _PATH_LDCONFIG_AUX_CACHE "/var/cache/ldconfig/aux-cache"
+#endif
 
 /* Declared in cache.c.  */
 extern void print_cache (const char *cache_name);

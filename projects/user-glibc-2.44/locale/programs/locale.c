@@ -321,10 +321,11 @@ select_dirs (const struct dirent *dirent)
       else
 	{
 	  struct stat64 st;
-	  char buf[sizeof (COMPLOCALEDIR)
+	  const char *complocaledir = BINARY_ROOT_PATH (COMPLOCALEDIR);
+	  char buf[strlen (complocaledir) + 1
 		   + strlen (dirent->d_name) + 1];
 
-	  stpcpy (stpcpy (stpcpy (buf, COMPLOCALEDIR), "/"),
+	  stpcpy (stpcpy (stpcpy (buf, complocaledir), "/"),
 		  dirent->d_name);
 
 	  if (stat64 (buf, &st) == 0)
@@ -442,20 +443,21 @@ write_locales (void)
     first_locale = 0;
 
   /* Now we can look for all files in the directory.  */
-  ndirents = scandir (COMPLOCALEDIR, &dirents, select_dirs,
+  const char *complocaledir = BINARY_ROOT_PATH (COMPLOCALEDIR);
+  ndirents = scandir (complocaledir, &dirents, select_dirs,
 		      alphasort);
   for (cnt = 0; cnt < ndirents; ++cnt)
     {
       /* Test whether at least the LC_CTYPE data is there.  Some
 	 directories only contain translations.  */
-      char buf[sizeof (COMPLOCALEDIR)
+      char buf[strlen (complocaledir) + 1
 	       + strlen (dirents[cnt]->d_name)
 	       + sizeof "/LC_IDENTIFICATION"];
       char *enddir;
       struct stat64 st;
 
       stpcpy (enddir = stpcpy (stpcpy (stpcpy (buf,
-					       COMPLOCALEDIR),
+					       complocaledir),
 					       "/"),
 			       dirents[cnt]->d_name),
 	      "/LC_IDENTIFICATION");
@@ -517,7 +519,7 @@ write_locales (void)
     free (dirents);
 
   /* Now read the locale.alias files.  */
-  if (argz_create_sep (LOCALE_ALIAS_PATH, ':', &alias_path, &alias_path_len))
+  if (argz_create_sep (BINARY_ROOT_PATH (LOCALE_ALIAS_PATH), ':', &alias_path, &alias_path_len))
     error (1, errno, gettext ("while preparing output"));
 
   entry = NULL;
@@ -644,7 +646,7 @@ write_archive_locales (void **all_datap, char *linebuf)
   int fd, ret = 0;
   uint32_t cnt;
 
-  fd = open64 (ARCHIVE_NAME, O_RDONLY);
+  fd = open64 (BINARY_ROOT_PATH (ARCHIVE_NAME), O_RDONLY);
   if (fd < 0)
     return 0;
 
@@ -699,8 +701,8 @@ write_archive_locales (void **all_datap, char *linebuf)
 	  if (cnt)
 	    putchar_unlocked ('\n');
 
-	  printf ("locale: %-15.15s archive: " ARCHIVE_NAME "\n%s\n",
-		  names[cnt].name, linebuf);
+	  printf ("locale: %-15.15s archive: %s\n%s\n",
+		  names[cnt].name, BINARY_ROOT_PATH (ARCHIVE_NAME), linebuf);
 
 	  locrec = (struct locrecent *) (addr + names[cnt].locrec_offset);
 
@@ -735,7 +737,7 @@ write_charmaps (void)
   const char *dirent;
 
   /* Look for all files in the charmap directory.  */
-  dir = charmap_opendir (CHARMAP_PATH);
+  dir = charmap_opendir (BINARY_ROOT_PATH (CHARMAP_PATH));
   if (dir == NULL)
     return;
 
@@ -746,7 +748,7 @@ write_charmaps (void)
 
       PUT (xstrdup (dirent));
 
-      aliases = charmap_aliases (CHARMAP_PATH, dirent);
+      aliases = charmap_aliases (BINARY_ROOT_PATH (CHARMAP_PATH), dirent);
 
 #if 0
       /* Add the code_set_name and the aliases.  */

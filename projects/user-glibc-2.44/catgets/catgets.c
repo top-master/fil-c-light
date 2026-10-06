@@ -48,21 +48,22 @@ catopen (const char *cat_name, int flag)
 	  || (__libc_enable_secure && strchr (env_var, '/') != NULL))
 	env_var = "C";
 
+      const char *default_nlspath = BINARY_ROOT_PATH (NLSPATH);
       nlspath = getenv ("NLSPATH");
       if (nlspath != NULL && *nlspath != '\0')
 	{
 	  /* Append the system dependent directory.  */
-	  size_t len = strlen (nlspath) + 1 + sizeof NLSPATH;
+	  size_t len = strlen (nlspath) + 1 + strlen (default_nlspath) + 1;
 	  tmp = malloc (len);
 
 	  if (__glibc_unlikely (tmp == NULL))
 	    return (nl_catd) -1;
 
-	  __stpcpy (__stpcpy (__stpcpy (tmp, nlspath), ":"), NLSPATH);
+	  __stpcpy (__stpcpy (__stpcpy (tmp, nlspath), ":"), default_nlspath);
 	  nlspath = tmp;
 	}
       else
-	nlspath = NLSPATH;
+	nlspath = default_nlspath;
     }
 
   result = (__nl_catd) malloc (sizeof (*result));

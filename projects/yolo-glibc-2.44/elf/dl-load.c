@@ -87,12 +87,57 @@ enum { ncapstr = 1, max_capstrlen = 0 };
    gen-trusted-dirs.awk.  */
 #include "trusted-dirs.h"
 
-static const char system_dirs[] = SYSTEM_DIRS;
-static const size_t system_dirs_len[] =
+/* The system folders: SYSTEM_DIRS writes them "=<path from the root>", which
+   init_system_dirs puts below the root found at run time (see binary-root.c).  */
+static const char system_dirs_built[] = SYSTEM_DIRS;
+static const char *system_dirs = system_dirs_built;
+static size_t system_dirs_len[] =
 {
   SYSTEM_DIRS_LEN
 };
 #define nsystem_dirs_len array_length (system_dirs_len)
+static size_t system_dirs_max_len = SYSTEM_DIRS_MAX_LEN;
+
+#if IS_IN (rtld)
+/* The root of the installation, for the loader (libc has its own).  */
+# include "../../binary-root.c"
+#endif
+
+/* Puts each system folder below the root, once; on failure (out of memory) they
+   stay as they are.  */
+static void
+init_system_dirs (void)
+{
+  static bool done;
+  if (done)
+    return;
+  done = true;
+
+  const char *dirs[nsystem_dirs_len];
+  size_t total = 0, idx;
+  const char *p = system_dirs_built;
+  for (idx = 0; idx < nsystem_dirs_len; ++idx)
+    {
+      dirs[idx] = __binary_root_join (1, p);
+      if (dirs[idx] == NULL)
+	return;
+      total += strlen (dirs[idx]) + 1;
+      p += system_dirs_len[idx] + 1;
+    }
+  char *all = malloc (total);
+  if (all == NULL)
+    return;
+  char *out = all;
+  system_dirs_max_len = 0;
+  for (idx = 0; idx < nsystem_dirs_len; ++idx)
+    {
+      system_dirs_len[idx] = strlen (dirs[idx]);
+      if (system_dirs_len[idx] > system_dirs_max_len)
+	system_dirs_max_len = system_dirs_len[idx];
+      out = __mempcpy (out, dirs[idx], system_dirs_len[idx] + 1);
+    }
+  system_dirs = all;
+}
 
 static bool
 is_trusted_path_normalize (const char *path, size_t len)
@@ -684,6 +729,8 @@ _dl_init_paths (const char *llp, const char *source,
   /* Initialize to please the compiler.  */
   const char *errstring = NULL;
 
+  init_system_dirs ();
+
   /* Fill in the information about the application's RPATH and the
      directories addressed by the LD_LIBRARY_PATH environment variable.  */
 
@@ -734,8 +781,8 @@ _dl_init_paths (const char *llp, const char *source,
       pelem->dirnamelen = system_dirs_len[idx];
       strp += system_dirs_len[idx] + 1;
 
-      /* System paths must be absolute.  */
-      assert (pelem->dirname[0] == '/');
+      /* System paths are absolute, unless the root is unknown (see
+	 binary-root.c).  */
       for (cnt = 0; cnt < ncapstr; ++cnt)
 	pelem->status[cnt] = unknown;
 
@@ -745,7 +792,7 @@ _dl_init_paths (const char *llp, const char *source,
     }
   while (idx < nsystem_dirs_len);
 
-  max_dirnamelen = SYSTEM_DIRS_MAX_LEN;
+  max_dirnamelen = system_dirs_max_len;
   *aelem = NULL;
 
   /* This points to the map of the main object.  If there is no main

@@ -171,14 +171,14 @@ localepath = "$(complocaledir):$(i18ndir)"
 # -Iprograms doesn't really belong here, but this gets it at the head
 # of the list instead of the tail, where CPPFLAGS-$(lib) gets added.
 # We need it before the standard -I's to see programs/config.h first.
-locale-CPPFLAGS = -DCOMPLOCALEDIR='"$(complocaledir)"' \
-		  -DLOCALE_ALIAS_PATH='"$(localedir)"' \
+locale-CPPFLAGS = -DCOMPLOCALEDIR='"$(call binary-root-path,$(complocaledir))"' \
+		  -DLOCALE_ALIAS_PATH='"$(call binary-root-path,$(localedir))"' \
 		  -Iprograms
 
-CPPFLAGS-locale-programs = -DLOCALE_PATH='$(localepath)' \
-			   -DCHARMAP_PATH='"$(i18ndir)/charmaps"' \
-			   -DREPERTOIREMAP_PATH='"$(i18ndir)/repertoiremaps"' \
-			   -DLOCSRCDIR='"$(i18ndir)/locales"'
+CPPFLAGS-locale-programs = -DLOCALE_PATH='$(call binary-root-path,$(localepath))' \
+			   -DCHARMAP_PATH='"$(call binary-root-path,$(i18ndir)/charmaps)"' \
+			   -DREPERTOIREMAP_PATH='"$(call binary-root-path,$(i18ndir)/repertoiremaps)"' \
+			   -DLOCSRCDIR='"$(call binary-root-path,$(i18ndir)/locales)"'
 
 CFLAGS-charmap.c += -Wno-write-strings -Wno-char-subscripts
 CFLAGS-locfile.c += -Wno-write-strings -Wno-char-subscripts

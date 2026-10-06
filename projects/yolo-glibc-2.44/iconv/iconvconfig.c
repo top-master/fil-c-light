@@ -309,7 +309,7 @@ main (int argc, char *argv[])
   if (! nostdlib)
     {
       /* In any case also handle the standard directory.  */
-      char *path = strdupa (GCONV_PATH), *tp = strsep (&path, ":");
+      char *path = strdupa (BINARY_ROOT_PATH (GCONV_PATH)), *tp = strsep (&path, ":");
       while (tp != NULL)
 	{
 	  status |= handle_dir (tp);
@@ -1012,18 +1012,18 @@ write_output (void)
   struct iovec iov[6];
   static const gidx_t null_word;
   size_t total;
-  char finalname[prefix_len + sizeof GCONV_MODULES_CACHE];
+  const char *modules_cache = BINARY_ROOT_PATH (GCONV_MODULES_CACHE);
+  char finalname[prefix_len + strlen (modules_cache) + 1];
   char tmpfname[(output_file == NULL ? sizeof finalname : output_file_len + 1)
 		+ strlen (".XXXXXX")];
 
   /* Open the output file.  */
   if (output_file == NULL)
     {
-      assert (GCONV_MODULES_CACHE[0] == '/');
       strcpy (stpcpy (mempcpy (tmpfname, prefix, prefix_len),
-		      GCONV_MODULES_CACHE),
+		      modules_cache),
 	      ".XXXXXX");
-      strcpy (mempcpy (finalname, prefix, prefix_len), GCONV_MODULES_CACHE);
+      strcpy (mempcpy (finalname, prefix, prefix_len), modules_cache);
     }
   else
     strcpy (mempcpy (tmpfname, output_file, output_file_len), ".XXXXXX");
