@@ -202,9 +202,10 @@ print_environ (char **environ)
 static void
 print_paths (void)
 {
-  _dl_diagnostics_print_labeled_string ("path.prefix", PREFIX);
-  _dl_diagnostics_print_labeled_string ("path.rtld", RTLD);
-  _dl_diagnostics_print_labeled_string ("path.sysconfdir", SYSCONFDIR);
+  /* Found below the root of the installation at run time (see binary-root.c).  */
+  _dl_diagnostics_print_labeled_string ("path.prefix", BINARY_ROOT_PATH (PREFIX));
+  _dl_diagnostics_print_labeled_string ("path.rtld", BINARY_ROOT_PATH (RTLD));
+  _dl_diagnostics_print_labeled_string ("path.sysconfdir", BINARY_ROOT_PATH (SYSCONFDIR));
 
   unsigned int index = 0;
   static const char *system_dirs = SYSTEM_DIRS "\0";

@@ -29,6 +29,8 @@ libc {
     dlvsym;
   }
   GLIBC_PRIVATE {
+    __binary_root;
+    __binary_root_join;
     __libc_dlerror_result;
     _dlerror_run;
     _dlfcn_hook;

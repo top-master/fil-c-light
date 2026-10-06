@@ -152,7 +152,7 @@ _nl_expand_alias (const char *name)
   __libc_lock_lock (lock);
 
   if (locale_alias_path == NULL)
-    locale_alias_path = LOCALE_ALIAS_PATH;
+    locale_alias_path = BINARY_ROOT_PATH (LOCALE_ALIAS_PATH);
 
   do
     {

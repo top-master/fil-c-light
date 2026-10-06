@@ -271,6 +271,15 @@ inst_vardbdir = $(install_root)$(vardbdir)
 # relative to $(zonedir).  It is a good idea to put this somewhere
 # other than there, so the zoneinfo directory contains only universal data,
 # localizing the configuration data elsewhere.
+# A path below $(prefix) in the form the libraries and programs find it at run time:
+# "=<path from the root of the installation>", the root being found from the binary's
+# own path (see binary-root.c); the prefix is the root itself (/opt/fil, as upstream
+# installs it). $(1) may be a ':'-separated list; only a path that starts with $(prefix)
+# changes, the others are kept as they are.
+binary-root-empty :=
+binary-root-space := $(binary-root-empty) $(binary-root-empty)
+binary-root-path = $(subst $(binary-root-space),:,$(patsubst $(prefix)%,=%,$(subst :,$(binary-root-space),$(1))))
+
 ifndef localtime-file
 localtime-file = /etc/localtime
 endif

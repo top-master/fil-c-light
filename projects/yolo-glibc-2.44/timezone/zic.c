@@ -1370,9 +1370,9 @@ main(int argc, char **argv)
 	    abort(); /* Configuration error.  */
 	}
 	if (directory == NULL)
-		directory = TZDIR;
+		directory = BINARY_ROOT_PATH (TZDIR);
 	if (tzdefault == NULL)
-		tzdefault = TZDEFAULT;
+		tzdefault = BINARY_ROOT_PATH (TZDEFAULT);
 
 	if (optind < argc && leapsec != NULL) {
 		infile(LEAPSEC_FILENUM, leapsec);

@@ -93,9 +93,10 @@ locfile_read (struct localedef_t *result, const struct charmap_t *charmap)
 	  /* Test in the default directory.  */
 	  if (ldfile == NULL)
 	    {
-	      char path[strlen (filename) + 1 + sizeof (LOCSRCDIR)];
+	      const char *locsrcdir = BINARY_ROOT_PATH (LOCSRCDIR);
+	      char path[strlen (filename) + 1 + strlen (locsrcdir) + 1];
 
-	      stpcpy (stpcpy (stpcpy (path, LOCSRCDIR), "/"), filename);
+	      stpcpy (stpcpy (stpcpy (path, locsrcdir), "/"), filename);
 	      ldfile = lr_open (path, locfile_hash);
 	    }
 	}

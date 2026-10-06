@@ -571,7 +571,7 @@ environment SPEC.\n\n"));
 	}
     }
 #else
-  const char *getconf_dir = getenv ("GETCONF_DIR") ?: GETCONF_DIR;
+  const char *getconf_dir = getenv ("GETCONF_DIR") ?: BINARY_ROOT_PATH (GETCONF_DIR);
   size_t getconf_dirlen = strlen (getconf_dir);
 
   const char *spec = NULL;

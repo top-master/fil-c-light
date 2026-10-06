@@ -104,10 +104,11 @@ repertoire_read (const char *filename)
 	  if (repfile == NULL)
 	    {
 	      /* Look in the systems charmap directory.  */
+	      const char *repertoiremap_path = BINARY_ROOT_PATH (REPERTOIREMAP_PATH);
 	      char *buf = xmalloc (strlen (filename) + 1
-				   + sizeof (REPERTOIREMAP_PATH));
+				   + strlen (repertoiremap_path) + 1);
 
-	      stpcpy (stpcpy (stpcpy (buf, REPERTOIREMAP_PATH), "/"),
+	      stpcpy (stpcpy (stpcpy (buf, repertoiremap_path), "/"),
 		      filename);
 	      repfile = lr_open (buf, repertoiremap_hash);
 

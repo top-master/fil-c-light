@@ -1678,7 +1678,7 @@ endif
 $(objpfx)trusted-dirs.h: $(objpfx)trusted-dirs.st; @:
 $(objpfx)trusted-dirs.st: Makefile $(..)Makeconfig
 	$(make-target-directory)
-	echo "$(subst :, ,$(default-rpath) $(user-defined-trusted-dirs))"    \
+	echo "$(subst :, ,$(call binary-root-path,$(default-rpath)) $(user-defined-trusted-dirs))"    \
 	| $(AWK) -f gen-trusted-dirs.awk > ${@:st=T};
 	echo '#define DL_DST_LIB "$(notdir $(slibdir))"' >> ${@:st=T}
 	$(move-if-change) ${@:st=T} ${@:st=h}
@@ -1734,18 +1734,22 @@ $(objpfx)sln: $(sln-modules:%=$(objpfx)%.o)
 
 $(objpfx)ldconfig: $(ldconfig-modules:%=$(objpfx)%.o)
 
-SYSCONF-FLAGS := -D'SYSCONFDIR="$(sysconfdir)"'
-CFLAGS-ldconfig.c += $(SYSCONF-FLAGS) -D'LIBDIR="$(libdir)"' \
-		    -D'SLIBDIR="$(slibdir)"'
+# The loader and ldconfig find their own installation's folders at run time (see
+# binary-root.c; ldconfig, a static program, through /proc/self/exe).
+SYSCONF-ROOT-FLAGS := -D'SYSCONFDIR="$(call binary-root-path,$(sysconfdir))"'
+CFLAGS-ldconfig.c += $(SYSCONF-ROOT-FLAGS) \
+		    -D'LIBDIR="$(call binary-root-path,$(libdir))"' \
+		    -D'SLIBDIR="$(call binary-root-path,$(slibdir))"' \
+		    -D'LDCONFIG_AUX_CACHE="$(call binary-root-path,$(localstatedir)/cache/ldconfig/aux-cache)"'
 libof-ldconfig = ldconfig
-CFLAGS-dl-cache.c += $(SYSCONF-FLAGS)
-CFLAGS-cache.c += $(SYSCONF-FLAGS)
-CFLAGS-rtld.c += $(SYSCONF-FLAGS)
-CFLAGS-dl-usage.c += $(SYSCONF-FLAGS) \
-  -D'RTLD="$(rtlddir)/$(rtld-installed-name)"'
-CFLAGS-dl-diagnostics.c += $(SYSCONF-FLAGS) \
-  -D'PREFIX="$(prefix)"' \
-  -D'RTLD="$(rtlddir)/$(rtld-installed-name)"'
+CFLAGS-dl-cache.c += $(SYSCONF-ROOT-FLAGS)
+CFLAGS-cache.c += $(SYSCONF-ROOT-FLAGS)
+CFLAGS-rtld.c += $(SYSCONF-ROOT-FLAGS)
+CFLAGS-dl-usage.c += $(SYSCONF-ROOT-FLAGS) \
+  -D'RTLD="$(call binary-root-path,$(rtlddir)/$(rtld-installed-name))"'
+CFLAGS-dl-diagnostics.c += $(SYSCONF-ROOT-FLAGS) \
+  -D'PREFIX="$(call binary-root-path,$(prefix))"' \
+  -D'RTLD="$(call binary-root-path,$(rtlddir)/$(rtld-installed-name))"'
 
 cpp-srcs-left := $(all-rtld-routines:=.os)
 lib := rtld

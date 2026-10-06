@@ -16,8 +16,10 @@
 # License along with the GNU C Library; if not, see
 # <https://www.gnu.org/licenses/>.
 
-pcprofileso='@SLIBDIR@/libpcprofile.so'
-pcprofiledump='@BINDIR@/pcprofiledump'
+# The installation's prefix, from this script's own folder (its bin/).
+prefix=$(cd "$(dirname -- "$0")/.." && pwd)
+pcprofileso="$prefix"'@SLIBDIR@/libpcprofile.so'
+pcprofiledump="$prefix"'@BINDIR@/pcprofiledump'
 TEXTDOMAIN=libc
 
 # Print usage message.
