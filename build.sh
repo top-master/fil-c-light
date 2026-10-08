@@ -58,8 +58,20 @@
 #                              crt (compiler-rt crt objects), unwind (libyolounwind),
 #                              osinc (pizfix/os-include), yolo (yolo glibc), pas (libpas
 #                              runtime, libpizlo), libc (user glibc), cxx (libc++ and
-#                              libc++abi, with their headers in build/include).
-#                              E.g. --sync='clang|pas'.
+#                              libc++abi, with their headers in build/include), crypt
+#                              (libxcrypt, from the 3rd-party/crypt submodule), and for
+#                              the /opt/fil toolchain (see --install) optfil-yolo and
+#                              optfil-libc (the two glibcs built again for /opt/fil),
+#                              whose early update goes to /opt/fil. --sync=yolo matches
+#                              yolo and optfil-yolo. E.g. --sync='clang|pas'. A portion
+#                              whose sources changed since it last built is built only
+#                              when <re> matches it, or --clean or --rebuild names it
+#                              (on every arch built); the others keep their last build.
+#                              A portion that never built, or whose output is gone, still
+#                              builds; clang has no such check of its own.
+#   ./build.sh --sync-stale    With --sync=<re>, also build the changed portions <re> does
+#                              not match (they then wait for the entire build to sync).
+#   ./build.sh --no-sync-stale Skip them again (the default).
 #   ./build.sh --no-sync       Leave the tree's toolchain as it is, even after the build.
 #
 #   ./build.sh --clean[=<re>]  Remove the build output that each portion whose keyword
@@ -134,17 +146,25 @@
 #                              package-build.sh (setup.sh, licenses, README included).
 #
 #   ./build.sh --install       With --glibc: once the build is done, install the toolchain at
-#   ./build.sh --setup         /opt/fil the way upstream's optfil/build_opt.sh does (both
-#                              glibcs built again for that prefix, as root, straight into
-#                              /opt/fil, which is emptied first), and pack it as
-#                              optfil-<version>-linux-<arch>.xz. The default; it asks for the
-#                              root password up front (sudo).
+#   ./build.sh --setup         /opt/fil in the layout of upstream's optfil/build_opt.sh
+#                              (both glibcs built again for that prefix, as the portions
+#                              optfil-yolo and optfil-libc; see --sync), replacing what
+#                              /opt/fil held, and pack it as
+#                              optfil-<version>-linux-<arch>.xz. The default; it asks for
+#                              the root password up front (sudo). With --sync, only what
+#                              is needed goes there: after a build, the portions this run
+#                              built; after --no-build, the package's portions <re>
+#                              matches. /opt/fil is replaced as a whole without --sync,
+#                              and while it holds no toolchain.
 #   ./build.sh --no-install    Leave /opt/fil alone: the toolchain stays in the build folder
 #   ./build.sh --no-setup      and this tree, where it finds its paths at run time; its
-#                              optfil-<version>-linux-<arch>.xz is still made, built under
-#                              the build folder's optfil-root/ for the /opt/fil prefix,
-#                              with no root. A foreign arch's always is: it cannot be
-#                              installed on this machine.
+#                              optfil-<version>-linux-<arch>.xz is still made. A foreign
+#                              arch's always is: it cannot be installed on this machine.
+#
+#                              Either way the /opt/fil toolchain is laid out in the build
+#                              folder's optfil-root/, with no root; its two glibcs build
+#                              in their own folders there, and like any portion are kept
+#                              when their sources did not change.
 #
 #   ./build.sh --headless      Never ask anything: without a root password at hand, --install
 #                              warns and works as --no-install instead.
@@ -620,7 +640,7 @@ filc_mirror() {
 }
 
 # ---------- cleaning portions (--clean, and --rebuild through it) ----------
-FILC_PORTIONS="clang crt unwind osinc yolo pas libc cxx"
+FILC_PORTIONS="clang crt unwind osinc yolo pas libc cxx crypt optfil-yolo optfil-libc"
 
 # A portion's keyword is cleaned when it matches FILC_CLEAN_FILTER (an extended regexp
 # over the keywords, not over paths); an empty filter matches none.
@@ -629,7 +649,8 @@ filc_clean_filter() {   # $1 = portion keyword
 }
 
 # Removes the build output a portion keeps in the build folder, so it builds from
-# scratch; what it installed into the build folder's pizfix/ stays. osinc keeps none.
+# scratch; what it installed into the build folder's pizfix/ (or optfil-root/) stays.
+# osinc keeps none.
 filc_clean_portion() {   # $1 = portion keyword
   case "$1" in
     clang)  rm -rf "${BUILD_DIR:?}/${CROSS:+clang-}build" ;;   # filc_clang_dir
@@ -639,6 +660,8 @@ filc_clean_portion() {   # $1 = portion keyword
     pas)    rm -rf "${BUILD_DIR:?}/libpas/build" ;;
     libc)   rm -rf "${BUILD_DIR:?}/pizlonated-user-glibc-build" ;;
     cxx)    rm -rf "${BUILD_DIR:?}/cxx-build" "${BUILD_DIR:?}/cxx-install" ;;
+    optfil-yolo) rm -rf "${BUILD_DIR:?}/optfil-yolo-glibc-build" ;;
+    optfil-libc) rm -rf "${BUILD_DIR:?}/optfil-user-glibc-build" ;;
     *)      return 0 ;;
   esac
   echo "clean: removed the $1 build output."
@@ -703,11 +726,13 @@ filc_sync_dir() {   # $1 = portion keyword, $2 = path
 }
 
 # Syncs the files the portion <keyword> produced: clang its bin/ and lib/clang, osinc
-# and yolo their own pizfix/ folders, the others the pizfix/ files their manifest
-# (written by filc_portion) lists.
+# and yolo their own pizfix/ folders, the /opt/fil portions theirs into /opt/fil (see
+# filc_optfil_sync_portion), the others the pizfix/ files their manifest (written by
+# filc_portion) lists.
 filc_sync_portion() {   # $1 = portion keyword
   local f
   case "$1" in
+    optfil-*) filc_optfil_sync_portion "$1"; return 0 ;;
     clang) filc_sync_dir clang build/bin; filc_sync_dir clang build/lib/clang ;;
     osinc) filc_sync_dir osinc pizfix/os-include ;;
     yolo)  filc_sync_dir yolo pizfix/yolo ;;
@@ -742,14 +767,18 @@ filc_portion_sources() {   # $1 = portion keyword
         *)     echo "projects/user-glibc-2.44 projects/binary-root.c projects/libxcrypt-4.5.2 filc/include build_user_glibc.sh build_xcrypt.sh" ;;
       esac ;;
     cxx)    echo "compiler/runtimes compiler/libcxx compiler/libcxxabi compiler/cmake" ;;
+    crypt)  echo "3rd-party/crypt" ;;
+    optfil-yolo) echo "projects/yolo-glibc-2.44 projects/binary-root.c optfil/kernel-include-$ARCH" ;;
+    optfil-libc) echo "projects/user-glibc-2.44 projects/binary-root.c filc/include" ;;
   esac
 }
 
-# Tells whether the portion <keyword> is current in the build folder: it built there
-# before (its manifest, written once it succeeded, exists), every file it installed is
-# still there, and none of its sources changed since.
+# Tells whether the portion <keyword> is current in the build folder: its last build is
+# still there (see filc_portion_built), none of its sources changed since, and for a
+# portion compiled with the Fil-C clang (see filc_portion_uses_clang), that clang did not
+# build again from changed sources since (see filc_clang_sources_changed).
 filc_portion_current() {   # $1 = portion keyword
-  local list="$BUILD_DIR/.filc-portions/$1.list" src p f
+  local list="$BUILD_DIR/.filc-portions/$1.list" src p
   src="$(filc_portion_sources "$1")"
   [ -n "$src" ] && filc_portion_built "$1" || return 1
   if filc_portion_uses_clang "$1" && [ "$(filc_runtime_clang_dir)/.filc-sources" -nt "$list" ]; then
@@ -763,10 +792,39 @@ filc_portion_current() {   # $1 = portion keyword
   done
 }
 
+# Prints the clang build folder whose clang compiles the runtime: this build folder's
+# build/, or for a foreign arch the host's (see filc_cross_helper).
+filc_runtime_clang_dir() {
+  if [ -n "${CROSS:-}" ]; then echo "${HOST_BUILD_DIR:-$BUILD_DIR}/build"; else echo "$BUILD_DIR/build"; fi
+}
+
+# Tells whether the portion <keyword> is compiled with the Fil-C clang of
+# filc_runtime_clang_dir.
+filc_portion_uses_clang() {   # $1 = portion keyword
+  case "$1" in
+    crt|pas|libc|cxx|crypt|optfil-libc) return 0 ;;
+  esac
+  return 1
+}
+
+# Tells whether the last build of the portion <keyword> is still in the build folder: it
+# built there before (its manifest, written once it succeeded and dated to when it
+# started, exists), and every file it installed is still there.
+filc_portion_built() {   # $1 = portion keyword
+  local list="$BUILD_DIR/.filc-portions/$1.list" f
+  [ -s "$list" ] || return 1
+  while IFS= read -r f; do
+    [ -e "$BUILD_DIR/$f" ] || [ -L "$BUILD_DIR/$f" ] || return 1
+  done < "$list"
+}
+
 # Runs <command> in the build folder as the portion <keyword> (for a foreign arch, with
-# the cross tools of filc_cross_env), records the pizfix/ files it wrote in that
-# portion's manifest, and syncs it when --sync's filter passes it. A portion that is
-# current (see filc_portion_current) is kept as it is, unless --clean or --rebuild asks.
+# the cross tools of filc_cross_env), records the files it produced in that portion's
+# manifest (see filc_portion_files), and syncs it when --sync's filter passes it. A
+# portion that is current (see filc_portion_current) is kept as it is, unless --clean or
+# --rebuild asks, as is a changed one that --sync=<re> leaves out (see
+# filc_sync_skips). The manifest is dated to the portion's start; hence a source edited
+# while it built still counts as changed.
 filc_portion() {   # $1 = portion keyword, $2... = command
   local kw="$1" marker
   shift
@@ -786,10 +844,26 @@ filc_portion() {   # $1 = portion keyword, $2... = command
   ( cd "$BUILD_DIR"
     if [ -n "${CROSS:-}" ]; then filc_cross_env; fi
     "$@" )
-  ( cd "$BUILD_DIR" && find pizfix -newer "$marker" \( -type f -o -type l \) 2>/dev/null ) \
-    > "$BUILD_DIR/.filc-portions/$kw.list"
+  ( cd "$BUILD_DIR" && filc_portion_files "$kw" "$marker" ) > "$BUILD_DIR/.filc-portions/$kw.list"
+  touch -r "$marker" "$BUILD_DIR/.filc-portions/$kw.list"
   BUILT="$BUILT $kw"
   filc_sync_portion "$kw"
+}
+
+# Lists, relative to the build folder (the current folder), the files the portion
+# <keyword> produced: those it wrote in pizfix/ since <marker>, or for a /opt/fil portion
+# its whole output folder (see filc_optfil_portion_dir), which it writes anew each time.
+filc_portion_files() {   # $1 = portion keyword, $2 = marker file of its start
+  case "$1" in
+    optfil-*) find "$(filc_optfil_portion_dir "$1")" \( -type f -o -type l \) | LC_ALL=C sort ;;
+    *)        find pizfix -newer "$2" \( -type f -o -type l \) 2>/dev/null ;;
+  esac
+}
+
+# Tells whether the file <path>, relative to both trees, exists in the build folder and
+# differs from the tree's copy, or the tree has none.
+filc_tree_differs() {   # $1 = path
+  [ -e "$BUILD_DIR/$1" ] && ! cmp -s "$BUILD_DIR/$1" "$ROOT/$1"
 }
 
 # Brings the tree up to date once the entire build is done. clang is synced unless --sync
@@ -811,6 +885,8 @@ filc_sync_all() {
       cxx)
         runtime=1
         filc_sync_dir cxx build/include ;;
+      # The /opt/fil toolchain is not the tree's (see filc_optfil_install).
+      optfil-*) ;;
       *) runtime=1 ;;
     esac
   done
@@ -1631,7 +1707,7 @@ filc_optfil_root() {
 # (the package's name in build_finish.sh, VERSION in setup.sh).
 filc_optfil_set_version() {
   local ver
-  if [ ! -f "$BUILD_DIR/optfil/build_opt.sh" ]; then
+  if [ ! -f "$BUILD_DIR/optfil/build_package.sh" ]; then
     echo "ERROR: optfil/ (upstream's /opt/fil scripts, trimmed for Fil-C-Light) is missing" \
          "from $ROOT; it is git-ignored, so copy it into the tree first." >&2
     exit 1
@@ -1641,63 +1717,333 @@ filc_optfil_set_version() {
   sed -i -E "s/^VERSION=\"[0-9.]+\"/VERSION=\"$ver\"/" "$BUILD_DIR/optfil/setup.sh"
 }
 
-# Prints the environment optfil's scripts build with, as NAME=VALUE words: bison's data
-# files when this tree fetched them (see filc_install_bison), as the runtime's portions
-# get them (sudo starts from a clean environment).
-filc_optfil_env() {
-  if [ -f "$TOOLS/bison-share/m4sugar/m4sugar.m4" ]; then
-    echo "BISON_PKGDATADIR=$TOOLS/bison-share"
-  fi
-}
-
-# Installs the toolchain the build folder built (the bootstrap) at /opt/fil, exactly as
-# upstream's optfil/ does it: build_opt.sh builds both glibcs again for the /opt/fil
-# prefix, as root, straight into /opt/fil (emptied first), and puts the clang, the
-# runtime and libc++ next to them; build_package.sh strips it and packs it with its
-# setup.sh and licenses (build_finish.sh), see filc_optfil_dist. Only for this machine's
-# arch: a foreign one cannot run here (see filc_optfil_package).
+# Installs the /opt/fil toolchain of this machine's arch at /opt/fil once the entire build
+# is done: builds and packs it (see filc_optfil_package), then puts the build folder's
+# optfil-root/opt/fil there as root (see filc_optfil_install_tree), replacing what
+# /opt/fil held, as upstream's optfil/build_opt.sh empties it first. Under --sync, only
+# the portions this run built or took from the prebuilt toolchain (PREBUILT) go there
+# (see filc_optfil_partial), the others keeping what they have; the files of an
+# optfil-* portion that --sync passed are there already (see filc_optfil_sync_portion).
+# A foreign arch cannot run here (see filc_optfil_package).
 filc_optfil_install() {   # $1 = marker file of the run's start
-  echo "===== optfil: installing the toolchain at /opt/fil (its old content is replaced) ====="
-  sudo mkdir -p /opt/fil
-  filc_optfil_set_version
-  ( cd "$BUILD_DIR/optfil" && sudo env $(filc_optfil_env) ./build_opt.sh )
-  filc_light_stamp "$TOOLS/stamp" glibc
-  sudo mkdir -p /opt/fil/share
-  sudo cp "$TOOLS/stamp/share/fil-c-light.ini" /opt/fil/share/fil-c-light.ini
-  rm -rf "$TOOLS/stamp"
-  if [ -n "$NOXZ" ]; then
-    echo "(--no-xz: /opt/fil is not packed)"
+  local tree="$BUILD_DIR/optfil-root/opt/fil"
+  filc_optfil_package "$1"
+  if filc_optfil_partial "$tree"; then
+    echo "===== optfil: copying what this run built into /opt/fil (--sync) ====="
+    # shellcheck disable=SC2086
+    [ -z "${BUILT// /}${PREBUILT:-}" ] || filc_optfil_install_tree "$tree" $BUILT ${PREBUILT:-}
     return 0
   fi
-  ( cd "$BUILD_DIR/optfil" && sudo ./build_package.sh )
-  filc_optfil_dist "$1"
+  echo "===== optfil: installing the toolchain at /opt/fil (its old content is replaced) ====="
+  filc_optfil_install_tree "$tree"
 }
 
-# Builds the same /opt/fil toolchain as filc_optfil_install, but under the build folder's
-# optfil-root/ instead of the real /opt/fil, needing no root (OPTFIL_DESTDIR, see
-# optfil/build_opt.sh), and packs it: for a foreign arch, which this machine cannot
-# install, and for this one under --no-install. The glibcs are still configured for
-# /opt/fil; the user glibc is compiled by the build folder's clang (aimed at the arch).
+# Builds the /opt/fil toolchain of the current arch (see filc_optfil_build) and packs it
+# the way upstream's optfil/ does, unless --no-xz: build_package.sh strips it and tars it
+# with its setup.sh and licenses (build_finish.sh), see filc_optfil_dist. For a foreign
+# arch, which this machine cannot install, and for this one under --no-install, that is
+# all; filc_optfil_install also installs it.
 filc_optfil_package() {   # $1 = marker file of the run's start
-  echo "===== optfil: building the $ARCH toolchain for /opt/fil (not installed here) ====="
+  echo "===== optfil: building the $ARCH toolchain for /opt/fil ====="
   filc_optfil_set_version
-  ( cd "$BUILD_DIR/optfil"
-    if [ -n "$CROSS" ]; then filc_cross_env; fi
-    optfil_env="$(filc_optfil_env)"
-    # shellcheck disable=SC2086
-    [ -z "$optfil_env" ] || export $optfil_env
-    export OPTFIL_DESTDIR="$BUILD_DIR/optfil-root"
-    export OPTFIL_FILCC="$BUILD_DIR/build/bin/clang" OPTFIL_FILCXX="$BUILD_DIR/build/bin/clang++"
-    export OPTFIL_CLANG
-    OPTFIL_CLANG="$(filc_clang_dir)/bin/clang-$CLANGVER"
-    ./build_opt.sh
-    filc_light_stamp "$OPTFIL_DESTDIR/opt/fil" glibc
-    if [ -z "$NOXZ" ]; then ./build_package.sh; fi )
+  filc_optfil_build
   if [ -n "$NOXZ" ]; then
     echo "(--no-xz: the $ARCH /opt/fil toolchain is not packed)"
     return 0
   fi
+  ( cd "$BUILD_DIR/optfil"
+    if [ -n "$CROSS" ]; then filc_cross_env; fi
+    OPTFIL_DESTDIR="$BUILD_DIR/optfil-root" ./build_package.sh )
   filc_optfil_dist "$1"
+}
+
+# Builds the /opt/fil toolchain of the current arch in the build folder, with no root,
+# in the layout of upstream's optfil/build_opt.sh: both glibcs again for the /opt/fil
+# prefix, as the portions optfil-yolo and optfil-libc (kept when their sources did not
+# change, cleaned by --clean and --rebuild, and synced early by --sync, as any portion),
+# then the whole toolchain in optfil-root/opt/fil (see filc_optfil_layout).
+filc_optfil_build() {
+  filc_runtime_env
+  filc_portion optfil-yolo filc_build_optfil_yolo
+  filc_portion optfil-libc filc_build_optfil_libc
+  filc_optfil_layout
+}
+
+# The optfil-yolo portion: the yolo glibc for the /opt/fil prefix, configured as
+# upstream's optfil/build_opt.sh does (the bundled kernel headers, no nscd), in its own
+# build folder, then laid out in optfil-yolo-glibc-build/layout as build_opt.sh lays it
+# out in /opt/fil/lib: the loader, libc and libm under the libyolo* names, the crt
+# objects and the linker scripts. Runs in the build folder.
+filc_build_optfil_yolo() {
+  local dir=optfil-yolo-glibc-build inst out fmt
+  if filc_optfil_needs_configure optfil-yolo "$dir"; then
+    filc_optfil_configure "$dir" projects/yolo-glibc-2.44 --prefix=/opt/fil --disable-mathvec \
+      --disable-nscd libc_cv_slibdir=/opt/fil/lib "--with-headers=$BUILD_DIR/optfil/kernel-include-$ARCH"
+  fi
+  inst="$BUILD_DIR/$dir/install-root"
+  filc_optfil_make "$dir" "$inst"
+  out="$dir/layout/lib"
+  rm -rf "$dir/layout"
+  mkdir -p "$out"
+  cp "$inst/opt/fil/lib/ld-fil1-$ARCH.so" "$out/ld-fil1-$ARCH.so"
+  cp "$inst/opt/fil/lib/libc.so.6" "$out/libyolocimpl.so"
+  cp "$inst/opt/fil/lib/libc_nonshared.a" "$out/libyoloc_nonshared.a"
+  cp "$inst/opt/fil/lib/libm.so.6" "$out/libyolomimpl.so"
+  cp "$inst"/opt/fil/lib/*.o "$out/"
+  patchelf --set-soname libyolocimpl.so "$out/libyolocimpl.so"
+  patchelf --replace-needed libc.so.6 libyolocimpl.so "$out/libyolomimpl.so"
+  patchelf --set-soname libyolomimpl.so "$out/libyolomimpl.so"
+  case "$ARCH" in
+    aarch64) fmt=elf64-littleaarch64 ;;
+    *)       fmt=elf64-x86-64 ;;
+  esac
+  printf 'OUTPUT_FORMAT(%s)\nGROUP ( %s %s  AS_NEEDED ( %s ) )\n' "$fmt" /opt/fil/lib/libyolocimpl.so \
+    /opt/fil/lib/libyoloc_nonshared.a "/opt/fil/lib/ld-fil1-$ARCH.so" > "$out/libyoloc.so"
+  printf 'OUTPUT_FORMAT(%s)\nGROUP ( /opt/fil/lib/libyolomimpl.so )\n' "$fmt" > "$out/libyolom.so"
+  rm -rf "$inst"
+}
+
+# The optfil-libc portion: the user glibc for the /opt/fil prefix, configured as
+# upstream's optfil/build_opt.sh does, compiled by the build folder's clang (aimed at the
+# arch), in its own build folder, and installed into
+# optfil-user-glibc-build/install-root. Runs in the build folder.
+filc_build_optfil_libc() {
+  local dir=optfil-user-glibc-build
+  if filc_optfil_needs_configure optfil-libc "$dir"; then
+    CC="$BUILD_DIR/build/bin/clang -nostdlibinc -yolo-assembler -Wno-ignored-attributes -Wno-pointer-sign -Wno-unused-command-line-argument -Wno-macro-redefined" \
+    CXX="$BUILD_DIR/build/bin/clang++ -nostdlibinc -Wno-ignored-attributes -Wno-pointer-sign" \
+      filc_optfil_configure "$dir" projects/user-glibc-2.44 --prefix=/opt/fil --disable-werror \
+        --enable-kernel=4.19 --disable-nscd --disable-mathvec libc_cv_slibdir=/opt/fil/lib
+    echo "rootsbindir=/opt/fil/sbin" > "$dir/configparms"
+  fi
+  filc_optfil_make "$dir" "$BUILD_DIR/$dir/install-root"
+}
+
+# Tells whether the glibc build folder <dir> of the /opt/fil portion <keyword> must be
+# configured from scratch: it has no config.status yet, or a make file among the
+# portion's sources changed since it last built (make tracks no flag those files set,
+# hence its objects would keep the old ones). Otherwise make rebuilds only what changed.
+filc_optfil_needs_configure() {   # $1 = portion keyword, $2 = dir
+  [ -f "$2/config.status" ] || return 0
+  filc_portion_makefiles_changed "$1"
+}
+
+# Tells whether a make file (a Makefile, Makeconfig, a *.mk or *.in template, configure
+# and its inputs, ...) among the sources of the portion <keyword> changed since it last
+# built (the date of its manifest, see filc_portion).
+filc_portion_makefiles_changed() {   # $1 = portion keyword
+  local list="$BUILD_DIR/.filc-portions/$1.list" p
+  [ -f "$list" ] || return 1
+  for p in $(filc_portion_sources "$1"); do
+    [ -d "$ROOT/$p" ] || continue
+    if [ -n "$(find "$ROOT/$p" -newer "$list" ! -path '*/.git/*' \( -name 'Make*' \
+          -o -name Rules -o -name '*.mk' -o -name '*.in' -o -name 'configure*' \
+          -o -name 'preconfigure*' -o -name aclocal.m4 -o -name Implies -o -name Subdirs \) \
+          -print -quit 2>/dev/null)" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Configures the glibc build folder <dir> from scratch for the sources in <src>, after
+# regenerating their configure, as upstream's optfil/ does.
+filc_optfil_configure() {   # $1 = dir, $2 = source dir, $3... = configure's arguments
+  rm -rf "$1"
+  mkdir -p "$1"
+  ( cd "$2" && autoconf )
+  ( cd "$1" && "../$2/configure" "${@:3}" )
+}
+
+# Builds the glibc of the build folder <dir> and installs it into the fresh folder
+# <root>, whose opt/fil is the /opt/fil prefix, with the empty etc/ld.so.conf upstream's
+# optfil/build_opt.sh gives each install.
+filc_optfil_make() {   # $1 = dir, $2 = install root
+  local ncpu
+  ncpu="$(filc_ncpu)"
+  rm -rf "$2"
+  mkdir -p "$2/opt/fil/etc"
+  : > "$2/opt/fil/etc/ld.so.conf"
+  make -C "$1" -j "$ncpu"
+  make -C "$1" -j "$ncpu" install "install_root=$2"
+}
+
+# Prints the folder, relative to the build folder, that holds what the /opt/fil portion
+# <keyword> produced, laid out as in /opt/fil.
+filc_optfil_portion_dir() {   # $1 = portion keyword
+  case "$1" in
+    optfil-yolo) echo optfil-yolo-glibc-build/layout ;;
+    optfil-libc) echo optfil-user-glibc-build/install-root/opt/fil ;;
+  esac
+}
+
+# Lays out the /opt/fil toolchain in the build folder's optfil-root/opt/fil, made anew and
+# then swapped in, by the steps of upstream's optfil/build_opt.sh that follow its glibc
+# builds, in their order: the bundled kernel headers, the yolo glibc's files (see
+# filc_build_optfil_yolo), the build folder's runtime, crt objects and stdfil headers,
+# its clang put on the package's own glibc (fix_clang.sh), the user glibc (see
+# filc_build_optfil_libc), whose crt objects replace the yolo ones, then no RUNPATH and
+# the /opt/fil loader for every library and program (as /opt/fil/bin/filcc links them),
+# then libc++ with its headers, the portion lists (see filc_optfil_portion_lists), and the
+# Fil-C-Light marker.
+filc_optfil_layout() {
+  local new="$BUILD_DIR/optfil-root.new" root="$BUILD_DIR/optfil-root"
+  echo "===== optfil: laying out $root/opt/fil ====="
+  rm -rf "$new"
+  mkdir -p "$new/opt/fil"
+  ( cd "$new/opt/fil"
+    if [ -n "$CROSS" ]; then filc_cross_env; fi
+    cp -r "$BUILD_DIR/optfil/kernel-include-$ARCH" include
+    mkdir lib bin
+    cp -a "$BUILD_DIR/$(filc_optfil_portion_dir optfil-yolo)/." .
+    for f in libpizlo.so filc_crt.o filc_mincrt.o crtbegin.o crtend.o libyolort.a libyolounwind.a; do
+      cp "$BUILD_DIR/pizfix/lib/$f" lib/
+    done
+    cp "$BUILD_DIR"/pizfix/stdfil-include/*.h include/
+    FILCSRC="$BUILD_DIR" OPTFIL="$PWD" OPTFIL_CLANG="$(filc_clang_dir)/bin/clang-$CLANGVER" \
+      "$BUILD_DIR/optfil/fix_clang.sh"
+    cp -rL "$BUILD_DIR/build/lib/clang" lib
+    ln -s filcc-clang-20 bin/filcc
+    ln -s filcc-clang-20 bin/fil++
+    ln -s filcc-clang-20 bin/filcpp
+    cp -a "$BUILD_DIR/$(filc_optfil_portion_dir optfil-libc)/." .
+    # libxcrypt, when the toolchain has it, with /opt/fil in its pkg-config and
+    # libtool files.
+    if [ -e "$BUILD_DIR/pizfix/lib/libcrypt.so.2" ]; then
+      cp -a "$BUILD_DIR"/pizfix/lib/libcrypt.so* lib/
+      cp "$BUILD_DIR/pizfix/include/crypt.h" include/
+      mkdir -p lib/pkgconfig
+      for f in lib/libcrypt.la lib/pkgconfig/libxcrypt.pc lib/pkgconfig/libcrypt.pc; do
+        if [ -L "$BUILD_DIR/pizfix/$f" ]; then
+          cp -a "$BUILD_DIR/pizfix/$f" "$f"
+        elif [ -f "$BUILD_DIR/pizfix/$f" ]; then
+          sed "s#$BUILD_DIR/pizfix#/opt/fil#g" "$BUILD_DIR/pizfix/$f" > "$f"
+        fi
+      done
+    fi
+    { find lib -type f -name '*.so*'; find bin sbin libexec -type f 2>/dev/null || true; } \
+      | while IFS= read -r x; do
+        if [ -n "$(patchelf --print-rpath "$x" 2>/dev/null)" ]; then
+          patchelf --remove-rpath "$x"
+        fi
+        if patchelf --print-interpreter "$x" > /dev/null 2>&1; then
+          patchelf --set-interpreter "/opt/fil/lib/ld-fil1-$ARCH.so" "$x"
+        fi
+      done
+    for f in libc++.so libc++.so.1.0 libc++abi.so.1.0 libc++.a libc++abi.a libc++experimental.a; do
+      cp "$BUILD_DIR/pizfix/lib/$f" lib/
+    done
+    ln -s libc++.so.1.0 lib/libc++.so.1
+    ln -s libc++abi.so.1.0 lib/libc++abi.so.1
+    ln -s libc++abi.so.1 lib/libc++abi.so
+    cp -r "$BUILD_DIR/build/include/c++" include
+    mkdir -p "include/$ARCH-unknown-linux-gnu"
+    cp -r "$BUILD_DIR/build/include/$ARCH-unknown-linux-gnu/c++" "include/$ARCH-unknown-linux-gnu" )
+  filc_optfil_portion_lists "$new/opt/fil"
+  filc_light_stamp "$new/opt/fil" glibc
+  rm -rf "$root.old"
+  if [ -e "$root" ]; then mv "$root" "$root.old"; fi
+  mv "$new" "$root"
+  rm -rf "$root.old"
+}
+
+# Writes the portion lists of the /opt/fil tree <dir> that filc_optfil_layout laid out:
+# share/fil-c-light/portions/<keyword>.list for each portion with files there, which names
+# them relative to <dir> (see filc_optfil_install_tree). A file two portions write (a crt
+# object of both glibcs) is in both lists, which then copy the one the layout kept.
+filc_optfil_portion_lists() {   # $1 = /opt/fil tree
+  local out="$1/share/fil-c-light/portions" kw f
+  rm -rf "$out"
+  mkdir -p "$out"
+  for kw in optfil-yolo optfil-libc clang crt unwind pas cxx crypt; do
+    ( cd "$1"
+      case "$kw" in
+        optfil-yolo)
+          ( cd "$BUILD_DIR/optfil/kernel-include-$ARCH" && find . \( -type f -o -type l \) ) \
+            | sed 's#^\./#include/#'
+          ( cd "$BUILD_DIR/$(filc_optfil_portion_dir optfil-yolo)" && find . \( -type f -o -type l \) ) \
+            | sed 's#^\./##' ;;
+        optfil-libc)
+          ( cd "$BUILD_DIR/$(filc_optfil_portion_dir optfil-libc)" && find . \( -type f -o -type l \) ) \
+            | sed 's#^\./##' ;;
+        clang)
+          printf '%s\n' bin/filcc-clang-20 bin/filcc bin/fil++ bin/filcpp
+          find lib/clang \( -type f -o -type l \) ;;
+        crt)    printf '%s\n' lib/crtbegin.o lib/crtend.o lib/libyolort.a ;;
+        unwind) printf '%s\n' lib/libyolounwind.a ;;
+        pas)
+          printf '%s\n' lib/libpizlo.so lib/filc_crt.o lib/filc_mincrt.o
+          for f in "$BUILD_DIR"/pizfix/stdfil-include/*.h; do echo "include/${f##*/}"; done ;;
+        cxx)
+          printf '%s\n' lib/libc++.so lib/libc++.so.1.0 lib/libc++.so.1 lib/libc++abi.so.1.0 \
+            lib/libc++abi.so.1 lib/libc++abi.so lib/libc++.a lib/libc++abi.a \
+            lib/libc++experimental.a
+          find include/c++ "include/$ARCH-unknown-linux-gnu/c++" \( -type f -o -type l \) ;;
+        crypt)
+          find lib -maxdepth 1 -name 'libcrypt.*'
+          printf '%s\n' include/crypt.h lib/pkgconfig/libxcrypt.pc lib/pkgconfig/libcrypt.pc ;;
+      esac | LC_ALL=C sort -u | while IFS= read -r f; do
+        if [ -e "$f" ] || [ -L "$f" ]; then echo "$f"; fi
+      done ) > "$out/$kw.list"
+    [ -s "$out/$kw.list" ] || rm -f "$out/$kw.list"
+  done
+}
+
+# Installs the /opt/fil tree <dir> at /opt/fil, as root. With no <keyword>, all of it
+# replaces what /opt/fil held. With keywords, only the files their portion lists name
+# (see filc_optfil_portion_lists) are copied over what /opt/fil holds; a portion with no
+# list there has none.
+filc_optfil_install_tree() {   # $1 = /opt/fil tree, $2... = portion keywords
+  local dir="$1" kw list
+  shift
+  sudo mkdir -p /opt/fil
+  if [ $# = 0 ]; then
+    sudo rsync -rlptD --delete "$dir/" /opt/fil/
+    return
+  fi
+  for kw in "$@"; do
+    list="$dir/share/fil-c-light/portions/$kw.list"
+    [ -s "$list" ] || continue
+    sudo rsync -rlptD --files-from="$list" "$dir/" /opt/fil/
+    echo "synced: $kw (into /opt/fil)"
+  done
+}
+
+# Tells whether --sync may update /opt/fil a portion at a time from the /opt/fil tree
+# <dir>: --sync was given, <dir> lists its portions, and /opt/fil holds a toolchain to
+# update (else the whole tree goes there).
+filc_optfil_partial() {   # $1 = /opt/fil tree
+  [ -n "$FILC_SYNC_FILTER" ] && [ -d "$1/share/fil-c-light/portions" ] && filc_optfil_installed
+}
+
+# Tells whether /opt/fil holds a toolchain.
+filc_optfil_installed() {
+  [ -e /opt/fil/bin/filcc ]
+}
+
+# Syncs what the /opt/fil portion <keyword> produced into /opt/fil right after it built,
+# as root, when the toolchain is installed there (--install, this machine's arch) and
+# --sync's filter passes the portion: lays out optfil-root/opt/fil (see
+# filc_optfil_layout) and copies the portion's files from there, as the whole layout has
+# them (the user glibc's crt objects over the yolo glibc's). Until both /opt/fil portions
+# have built once, there is no whole layout, and the portion waits for the entire build.
+filc_optfil_sync_portion() {   # $1 = portion keyword
+  if [ "${INSTALL:-0}" != 1 ] || ! filc_sync_filter "$1"; then
+    return 0
+  fi
+  local kw dir
+  for kw in optfil-yolo optfil-libc; do
+    if [ ! -d "$BUILD_DIR/$(filc_optfil_portion_dir "$kw")" ]; then
+      echo "($1 waits for the entire build: $kw has not built in $BUILD_DIR yet)"
+      return 0
+    fi
+  done
+  filc_optfil_layout
+  dir="$(filc_optfil_portion_dir "$1")"
+  sed "s#^$dir/##" "$BUILD_DIR/.filc-portions/$1.list" \
+    | sudo rsync -rlptD --files-from=- "$BUILD_DIR/optfil-root/opt/fil/" /opt/fil/
+  SYNCED="$SYNCED $1"
+  echo "synced: $1 (into /opt/fil)"
 }
 
 # Prints the libc of the toolchain in <dir> (its build/ + pizfix/) as package-build.sh
