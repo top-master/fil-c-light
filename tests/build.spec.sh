@@ -973,6 +973,55 @@ expect '--no-build --musl fails: no prebuilt musl toolchain is published' 'exit@
     "$(_light_run --no-build --install --musl)"
 
 
+test_section '--cosmo -- the optional cosmo submodule, its own build folder'
+
+_parse --cosmo
+expect '--cosmo picks cosmo, in a build folder beside the glibc one' \
+    "cosmo $(dirname "$ROOT")/build/$(basename "$ROOT")-cosmo" "$LIBC $BUILD_DIR"
+expect 'its yolo and user libc build from the submodule'"'"'s sources' \
+    '3rd-party/libc-cosmo/projects/yolocosmo 3rd-party/libc-cosmo/build_yolocosmo.sh|3rd-party/libc-cosmo/projects/usercosmo filc/include 3rd-party/libc-cosmo/build_usercosmo.sh' \
+    "$(LIBC=cosmo filc_portion_sources yolo)|$(LIBC=cosmo filc_portion_sources libc)"
+expect 'and run upstream'"'"'s cosmo scripts' 'yolo:bash ./build_yolocosmo.sh pas:filc_build_pas libc:bash ./build_usercosmo.sh' \
+    "$( ( LIBC=cosmo; filc_runtime_env() { :; }; filc_portion() { echo "$1:${*:2}"; }; BUILD_DIR=$_sb/none
+          filc_build_runtime_libc no-cxx ) | grep -E '^(yolo|pas|libc):' | tr '\n' ' ' | sed 's/ $//')"
+# The tree's mirror leaves the submodule out, and a cosmo build lays it over the build
+# folder where upstream's scripts look.
+_cm=$_sb/cm; rm -rf "$_cm"; mkdir -p "$_cm/tree/3rd-party/libc-cosmo/projects/usercosmo" "$_cm/tree/compiler" "$_cm/tree/filc"
+: > "$_cm/tree/build_x.sh"; : > "$_cm/tree/3rd-party/libc-cosmo/build_usercosmo.sh"
+: > "$_cm/tree/3rd-party/libc-cosmo/projects/usercosmo/Makefile"
+( ROOT=$_cm/tree; BUILD_DIR=$_cm/ws-glibc; LIBC=glibc; CROSS=""; filc_mirror )
+expect 'a glibc build folder gets no cosmo sources' 'yes no' \
+    "$([ -f "$_cm/ws-glibc/build_x.sh" ] && echo yes || echo no) $([ -e "$_cm/ws-glibc/3rd-party/libc-cosmo" ] || [ -e "$_cm/ws-glibc/build_usercosmo.sh" ] && echo yes || echo no)"
+( ROOT=$_cm/tree; BUILD_DIR=$_cm/ws-cosmo; LIBC=cosmo; CROSS=""; filc_mirror )
+expect 'a cosmo one gets them at upstream'"'"'s paths' 'yes yes' \
+    "$([ -f "$_cm/ws-cosmo/build_usercosmo.sh" ] && echo yes) $([ -f "$_cm/ws-cosmo/projects/usercosmo/Makefile" ] && echo yes)"
+# filc_cosmo_fetch: the compiler/ check, then the checkout at this tree's version tag.
+_cf_run() { ( ROOT=$_cm/tree; filc_light_version() { echo 1.0.0; }; filc_cosmo_fetch ) 2>&1; echo "exit@$?"; }
+_log=$(_cf_run)
+expect 'a compiler/ with no cosmo support stops --cosmo' 'yes exit@1' \
+    "$(grep -c 'needs a compiler/ of upstream Fil-C 0.686' <<< "$_log" | sed 's/^1$/yes/') ${_log##*$'\n'}"
+mkdir -p "$_cm/tree/compiler/clang/include/clang/Driver"
+echo 'def filc_fat_ape : Flag<["--"], "filc-fat-ape">;' > "$_cm/tree/compiler/clang/include/clang/Driver/Options.td"
+_sub=$_cm/tree/3rd-party/libc-cosmo
+git -C "$_sub" init -q
+git -C "$_sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+git -C "$_sub" tag 1.0.0
+git -C "$_sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+expect 'an existing checkout is moved to the tag of this tree'"'"'s version' 'exit@0 one' \
+    "$(_cf_run | tail -1) $(git -C "$_sub" log -1 --format=%s)"
+# No git: filc_find_git finds none for this test, and is restored after it.
+_find_git=$(declare -f filc_find_git)
+filc_find_git() { return 1; }
+_log=$(_cf_run)
+expect 'without git --cosmo cannot fetch, and says so' 'yes exit@1' \
+    "$(grep -c 'with git, and there is none' <<< "$_log" | sed 's/^1$/yes/') ${_log##*$'\n'}"
+eval "$_find_git"
+unset _find_git
+expect 'with git found again it works again' 'exit@0' "$(_cf_run | tail -1)"
+expect 'the cosmo package is named as package-build.sh names it' \
+    'Linux x86_64, cosmopolitan libc: static programs that run unchanged on several OSes (./setup.sh)' \
+    "$(filc_asset_description cosmo-filc-0.686-linux-x86_64.xz)"
+
 test_section '--musl -- its own build folder, the glibc one'"'"'s clang, upstream'"'"'s package'
 
 _parse --musl
