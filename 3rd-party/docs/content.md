@@ -16,7 +16,10 @@ just pure Fil-C functionality -- see details below.
 - `compiler/`: a removable submodule with the LLVM + Clang sources of the Fil-C
   compiler, needed only to build that compiler from source.
 
-Both libc families are supported, glibc and musl, the same as full Fil-C.
+Both libc families are supported, glibc and musl, the same as full Fil-C. Upstream's
+third flavor, cosmopolitan libc, is not in this tree: it is the optional
+`3rd-party/libc-cosmo` submodule (the `fil-c-cosmo` repo), fetched only by `./build.sh
+--cosmo`.
 
 
 ## What is NOT included (and why)
