@@ -42,6 +42,9 @@ However, you could also run `./build.sh --help` to lists other options:
 
     ./build.sh --musl          # The musl slice instead of glibc (in its own build folder).
 
+    ./build.sh --cosmo         # The cosmopolitan-libc slice; only then fetches its sources,
+                               # the optional 3rd-party/libc-cosmo sub-module.
+
 
 
     ./build.sh --clean=pas     # Remove one portion's build output, build nothing

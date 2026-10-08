@@ -21,7 +21,8 @@
 #                              runtime and the glibc slice. On success the result is packed
 #                              as upstream packs it, for reuse/redistribution: glibc as the
 #                              /opt/fil package dist/optfil-<version>-linux-<arch>.xz,
-#                              musl as dist/filc-<version>-linux-<arch>.xz.
+#                              musl as dist/filc-<version>-linux-<arch>.xz, cosmo as
+#                              dist/cosmo-filc-<version>-linux-<arch>.xz.
 #
 #                              Either build runs in the build folder beside this tree
 #                              (../build/<tree name>, see -d), a mirror of the tree that
@@ -106,7 +107,7 @@
 #
 #   ./build.sh --export        Only pack the toolchain this tree already uses (build/ +
 #                              pizfix/) as upstream packs it: no build, no publishing. A
-#                              musl one only (see --musl); a glibc toolchain is
+#                              musl or cosmo one only (see --musl); a glibc toolchain is
 #                              packed by a build, as the /opt/fil package.
 #
 #   ./build.sh --publish       Also publish the archive the run generates (a --nightly
@@ -144,6 +145,15 @@
 #                              build folder built (so build that one first), and packs
 #                              filc-<version>-linux-<arch>.xz with upstream's
 #                              package-build.sh (setup.sh, licenses, README included).
+#   ./build.sh --cosmo         Or cosmopolitan libc (upstream's third flavor: static "actually
+#                              portable executables", see cosmo.txt in it), which this tree
+#                              does not carry: its sources are the optional 3rd-party/libc-
+#                              cosmo submodule (the fil-c-cosmo repo), fetched only by
+#                              --cosmo, at this tree's own version tag. Like --musl it builds
+#                              in <build folder>-cosmo with the glibc folder's clang, and packs
+#                              cosmo-filc-<version>-linux-<arch>.xz with package-build.sh;
+#                              it needs a compiler/ of upstream 0.686 or later (whose clang
+#                              and libc++ know cosmo) and an x86_64 host.
 #
 #   ./build.sh --install       With --glibc: once the build is done, install the toolchain at
 #   ./build.sh --setup         /opt/fil in the layout of upstream's optfil/build_opt.sh
@@ -199,6 +209,7 @@ TOOLS="$ROOT/.filc-light-tools"
 DIST="$ROOT/dist"
 HOST_CLANG="${HOST_CLANG:-clang}"
 CLANGVER=20                       # LLVM major of the Fil-C fork (produces bin/clang-20)
+FILC_COSMO_DIR=3rd-party/libc-cosmo  # the optional cosmo submodule (see filc_cosmo_fetch)
 
 # ---------- platform identity ----------
 # Sets ARCH, the CPU arch the build is for: <arch>, else the host's.
@@ -454,7 +465,7 @@ filc_download_install() {
 # Marks the toolchain whose clang is in <dir>/bin as a Fil-C-Light one, apart from an
 # upstream Fil-C (both name their clang alike): the file <dir>/share/fil-c-light.ini,
 # whose [Version] group gives Light's own version, the upstream release it is based on
-# and its libc (glibc or musl; values unquoted, as QSettings reads them). XD's build-handler looks for it to
+# and its libc (glibc, musl or cosmo; values unquoted, as QSettings reads them). XD's build-handler looks for it to
 # prefer Light.
 filc_light_stamp() {   # $1 = dir (the one holding bin/), [$2 = its libc, else LIBC]
   mkdir -p "$1/share"
@@ -489,6 +500,37 @@ filc_upstream_version() {
   local v
   v="$(filc_tag_version 'upstream-*' upstream-)"
   echo "${v:-0.680}"
+}
+
+# --cosmo: makes sure the optional cosmo submodule (FILC_COSMO_DIR, the fil-c-cosmo repo,
+# which only --cosmo ever fetches) is checked out at this tree's own version tag (see
+# filc_light_version), which that repo carries too, else at the commit this tree pins;
+# and that compiler/ can build cosmo programs at all (upstream added cosmo to its clang
+# driver and libc++ in 0.686). Exits on failure.
+filc_cosmo_fetch() {
+  local git sub="$ROOT/$FILC_COSMO_DIR" tag
+  if ! grep -q 'filc_fat_ape\|filc-fat-ape' "$ROOT/compiler/clang/include/clang/Driver/Options.td" 2>/dev/null; then
+    echo "ERROR: --cosmo needs a compiler/ of upstream Fil-C 0.686 or later (cosmo support in" \
+         "its clang driver and libc++); this one has none." >&2
+    exit 1
+  fi
+  git="$(filc_find_git)" || { echo "ERROR: --cosmo fetches $FILC_COSMO_DIR with git, and there is none." >&2; exit 1; }
+  if [ ! -e "$sub/.git" ]; then
+    echo "Fetching the cosmo sources ($FILC_COSMO_DIR) ..."
+    # The submodule is marked update = none, so no plain (recursive) update pulls it. Its
+    # URL may be a local repo (a checkout's own submodule.<name>.url), which git refuses
+    # to clone from unless file transport is allowed.
+    "$git" -C "$ROOT" -c "submodule.$FILC_COSMO_DIR.update=checkout" -c protocol.file.allow=always \
+      submodule update --init -- "$FILC_COSMO_DIR" \
+      || { echo "ERROR: could not fetch $FILC_COSMO_DIR." >&2; exit 1; }
+  fi
+  tag="$(filc_light_version)"
+  if "$git" -C "$sub" rev-parse -q --verify "refs/tags/$tag^{commit}" > /dev/null \
+     || "$git" -C "$sub" fetch -q --tags origin 2>/dev/null; then
+    "$git" -C "$sub" rev-parse -q --verify "refs/tags/$tag^{commit}" > /dev/null \
+      && "$git" -C "$sub" checkout -q "refs/tags/$tag^{commit}"
+  fi
+  echo "cosmo sources: $FILC_COSMO_DIR at $("$git" -C "$sub" describe --tags --always 2>/dev/null)"
 }
 
 # Lays the /opt/fil tree <fil> (an optfil package's payload) out as this tree does:
@@ -618,7 +660,9 @@ filc_mirror() {
   local list="$BUILD_DIR/.filc-mirror.list" f
   mkdir -p "$BUILD_DIR"
   ( cd "$ROOT" && find . \( -path ./.git -o -path ./build -o -path ./pizfix -o -path ./dist \
-        -o -path ./.filc-light-tools -o -path ./tmp-build -o -path ./compiler -o -path ./filc \) \
+        -o -path ./.filc-light-tools -o -path ./tmp-build -o -path ./compiler -o -path ./filc \
+        -o -path ./3rd-party/crypt \
+        -o -path "./$FILC_COSMO_DIR" \) \
         -prune -o \( -type f -o -type l \) -print ) | sed 's#^\./##' | LC_ALL=C sort > "$list.new"
   if [ -f "$list" ]; then
     LC_ALL=C comm -23 "$list" "$list.new" | while IFS= read -r f; do
@@ -629,7 +673,13 @@ filc_mirror() {
   rsync -a \
     --exclude=/.git --exclude=/build/ --exclude=/pizfix/ --exclude=/dist/ \
     --exclude=/.filc-light-tools/ --exclude=/tmp-build/ --exclude=/compiler --exclude=/filc \
+    --exclude=/3rd-party/crypt/ \
+    --exclude="/$FILC_COSMO_DIR/" \
     "$ROOT/" "$BUILD_DIR/"
+  # The cosmo sources sit where upstream's scripts expect them (projects/usercosmo, ...).
+  if [ "${LIBC:-glibc}" = cosmo ]; then
+    rsync -a --exclude=/.git "$ROOT/$FILC_COSMO_DIR/" "$BUILD_DIR/"
+  fi
   local d
   for d in compiler filc; do
     [ -L "$BUILD_DIR/$d" ] || { rm -rf "${BUILD_DIR:?}/$d"; ln -s "$ROOT/$d" "$BUILD_DIR/$d"; }
@@ -656,10 +706,11 @@ filc_clean_portion() {   # $1 = portion keyword
     clang)  rm -rf "${BUILD_DIR:?}/${CROSS:+clang-}build" ;;   # filc_clang_dir
     crt)    rm -rf "${BUILD_DIR:?}/compiler-rt/build" ;;
     unwind) rm -f "${BUILD_DIR:?}"/yolounwind/*.o "${BUILD_DIR:?}"/yolounwind/*.a ;;
-    yolo)   rm -rf "${BUILD_DIR:?}/pizlonated-yolo-glibc-build" ;;
+    yolo)   rm -rf "${BUILD_DIR:?}/pizlonated-yolo-glibc-build" "${BUILD_DIR:?}/projects/yolocosmo/o" ;;
     pas)    rm -rf "${BUILD_DIR:?}/libpas/build" ;;
-    libc)   rm -rf "${BUILD_DIR:?}/pizlonated-user-glibc-build" ;;
+    libc)   rm -rf "${BUILD_DIR:?}/pizlonated-user-glibc-build" "${BUILD_DIR:?}"/projects/usercosmo/o-filc* ;;
     cxx)    rm -rf "${BUILD_DIR:?}/cxx-build" "${BUILD_DIR:?}/cxx-install" ;;
+    crypt)  rm -rf "${BUILD_DIR:?}/crypt-build" ;;
     optfil-yolo) rm -rf "${BUILD_DIR:?}/optfil-yolo-glibc-build" ;;
     optfil-libc) rm -rf "${BUILD_DIR:?}/optfil-user-glibc-build" ;;
     *)      return 0 ;;
@@ -758,13 +809,15 @@ filc_portion_sources() {   # $1 = portion keyword
     yolo)
       case "${LIBC:-glibc}" in
         musl)  echo "projects/yolomusl build_yolomusl.sh" ;;
+        cosmo) echo "$FILC_COSMO_DIR/projects/yolocosmo $FILC_COSMO_DIR/build_yolocosmo.sh" ;;
         *)     echo "projects/yolo-glibc-2.44 projects/binary-root.c build_yolo_glibc.sh fix_yolo_glibc.sh" ;;
       esac ;;
     pas)    echo "libpas filc build_runtime.sh" ;;
     libc)
       case "${LIBC:-glibc}" in
         musl)  echo "projects/usermusl filc/include build_usermusl.sh" ;;
-        *)     echo "projects/user-glibc-2.44 projects/binary-root.c projects/libxcrypt-4.5.2 filc/include build_user_glibc.sh build_xcrypt.sh" ;;
+        cosmo) echo "$FILC_COSMO_DIR/projects/usercosmo filc/include $FILC_COSMO_DIR/build_usercosmo.sh" ;;
+        *)     echo "projects/user-glibc-2.44 projects/binary-root.c filc/include build_user_glibc.sh" ;;
       esac ;;
     cxx)    echo "compiler/runtimes compiler/libcxx compiler/libcxxabi compiler/cmake" ;;
     crypt)  echo "3rd-party/crypt" ;;
@@ -1052,7 +1105,24 @@ filc_build_clang() {   # $1 = static, dynamic (or empty) or any
   filc_sync_portion clang
 }
 
-# A musl build folder builds no LLVM: it takes the clang its glibc build folder built
+# Tells whether clang's sources (compiler/'s llvm, clang and cmake) changed since the
+# clang build folder <dir> last built it from them: since .filc-sources there, or in a
+# folder that has none yet, since its clang binary. A folder without a cmake cache (a
+# prebuilt clang) never counts as changed.
+filc_clang_sources_changed() {   # $1 = clang build folder
+  local d since="$1/.filc-sources"
+  [ -f "$1/CMakeCache.txt" ] || return 1
+  [ -e "$since" ] || since="$1/bin/clang-$CLANGVER"
+  [ -e "$since" ] || return 1
+  for d in llvm clang cmake; do
+    if [ -n "$(find "$ROOT/compiler/$d" -newer "$since" -print -quit 2>/dev/null)" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A musl (or cosmo) build folder builds no LLVM: it takes the clang its glibc build folder built
 # (the clang does not depend on the libc), hard-linked: for this machine's arch build/bin's
 # clang-<ver> and its lib/clang, for a foreign arch clang-build/'s (build/ there holds the
 # helper of filc_cross_helper, taken from this machine's musl folder the same way). Fails
@@ -1379,8 +1449,19 @@ filc_build_cxx() {
   # configure_llvm.sh's default libc option, which setup_glibc.sh empties for glibc.
   case "${LIBC:-glibc}" in
     musl)  libc_flags=(-DLIBCXX_HAS_MUSL_LIBC=ON) ;;
+    # Cosmo programs are static: libc++ is built static-only (as upstream's build_cxx.sh).
+    cosmo) libc_flags=(-DLIBCXX_HAS_MUSL_LIBC=OFF -DLIBCXX_HAS_COSMO_LIBC=ON
+                       -DLIBCXX_ENABLE_SHARED=OFF -DLIBCXXABI_ENABLE_SHARED=OFF) ;;
   esac
   mkdir -p "$dir"
+  # CMake drops its whole cache, the options given below with it, when the cache
+  # names another compiler path (the build folder reached through another path,
+  # say), and then configures without the runtimes; hence such a cache goes first.
+  if [ -f "$dir/CMakeCache.txt" ] \
+    && ! grep -qx "CMAKE_CXX_COMPILER:[A-Z]*=$BUILD_DIR/build/bin/clang++" "$dir/CMakeCache.txt"
+  then
+    rm -rf "$dir/CMakeCache.txt" "$dir/CMakeFiles"
+  fi
   # The compiler checks link a test program, and the Fil-C clang++ links libc++ into
   # every program: before the first libc++ exists they fail, so they are skipped, as in
   # a runtimes bootstrap (libc++'s own checks link with -nostdlib++).
@@ -1447,6 +1528,13 @@ filc_build_runtime_libc() {   # [$1 = no-cxx]
     filc_portion yolo bash ./build_yolomusl.sh
     filc_portion pas  filc_build_pas
     filc_portion libc filc_build_user_musl
+  elif [ "${LIBC:-glibc}" = cosmo ]; then
+    # Upstream's own cosmo scripts (from the libc-cosmo submodule, laid over the build
+    # folder by filc_mirror); libpas turns to cosmo by itself once libyolocosmo.a is in
+    # pizfix/lib.
+    filc_portion yolo bash ./build_yolocosmo.sh
+    filc_portion pas  filc_build_pas
+    filc_portion libc bash ./build_usercosmo.sh
   else
     filc_portion yolo bash ./build_yolo_glibc.sh
     filc_portion pas  filc_build_pas
@@ -1507,6 +1595,9 @@ filc_asset_description() {   # $1 = package name
     optfil-*.xz)
       printf 'Linux %s, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc\n' "$arch"
       return 0 ;;
+    cosmo-filc-*-linux-*.xz)
+      printf 'Linux %s, cosmopolitan libc: static programs that run unchanged on several OSes (./setup.sh)\n' "$arch"
+      return 0 ;;
     filc-*-linux-*.xz)
       clang="$(filc_archived_clang)"
       [ -z "$clang" ] || floor="$(filc_clang_glibc_floor "$clang")"
@@ -1536,7 +1627,7 @@ def describe(asset):
         return listed[asset["name"]]
     if asset.get("label") and asset["label"] != asset["name"]:
         return asset["label"]
-    tag = re.sub(r"^(optfil|filc)-([0-9.]+-)?", "", asset["name"][:-len(".xz")])
+    tag = re.sub(r"^(optfil|cosmo-filc|filc)-([0-9.]+-)?", "", asset["name"][:-len(".xz")])
     words = tag.replace("-", " ")
     return words[:1].upper() + words[1:]
 assets = sorted((a for a in rel.get("assets", []) if a["name"].endswith(".xz")),
@@ -1549,6 +1640,7 @@ naming = "\n".join([
     "- **`optfil-*`** is the prefix for `glibc` compiled binaries, which will be installed"
     " to `/opt/fil` directory (portable: the install into the fixed path is optional).",
     "- **`filc-*`** means `musl` as libc (portable).",
+    "- **`cosmo-filc-*`** means `cosmopolitan` as libc (portable).",
 ])
 if os.environ.get("FILC_RELEASE_LATEST") != "1":
     naming = "See [Release Naming](%s) for what the package names mean." % os.environ.get("FILC_NAMING_URL", "")
@@ -2047,9 +2139,11 @@ filc_optfil_sync_portion() {   # $1 = portion keyword
 }
 
 # Prints the libc of the toolchain in <dir> (its build/ + pizfix/) as package-build.sh
-# tells it: glibc when pizfix/lib holds libc.so.6666, else musl.
+# tells it: cosmo when pizfix/lib holds libyolocosmo.a, glibc when it holds
+# libc.so.6666, else musl.
 filc_toolchain_libc() {   # $1 = dir
-  if [ -f "$1/pizfix/lib/libc.so.6666" ]; then echo glibc
+  if [ -f "$1/pizfix/lib/libyolocosmo.a" ]; then echo cosmo
+  elif [ -f "$1/pizfix/lib/libc.so.6666" ]; then echo glibc
   else echo musl; fi
 }
 
@@ -2057,7 +2151,7 @@ filc_toolchain_libc() {   # $1 = dir
 # package is made: its package-build.sh, run there, puts build/ (the clang, libc++'s
 # headers, the Fil-C-Light marker), pizfix/, its setup.sh (which points every binary at
 # where it is unpacked), the licenses and the README into <base>-<version>-linux-<arch>
-# (filc for musl; it refuses glibc, whose package is the /opt/fil
+# (filc for musl, cosmo-filc for cosmo; it refuses glibc, whose package is the /opt/fil
 # one), which lands in dist/ as <base>-<version>-linux-<arch>.xz and is published with
 # --publish.
 filc_upstream_package() {   # $1 = marker file of the run's start, [$2 = dir]
@@ -2072,10 +2166,10 @@ filc_upstream_package() {   # $1 = marker file of the run's start, [$2 = dir]
       export PACKAGE_CLANG
       PACKAGE_CLANG="$(filc_clang_dir)/bin/clang-$CLANGVER"
     fi
-    rm -rf filc-*-"$ARCH" filc-*-"$ARCH".xz
+    rm -rf filc-*-"$ARCH" filc-*-"$ARCH".xz cosmo-filc-*-"$ARCH" cosmo-filc-*-"$ARCH".xz
     filc_light_stamp build "$libc"
     bash ./3rd-party/builds/package-build.sh ) || exit 1
-  made="$(ls -t "$dir"/filc-*-"$ARCH".xz 2>/dev/null | head -1)"
+  made="$(ls -t "$dir"/filc-*-"$ARCH".xz "$dir"/cosmo-filc-*-"$ARCH".xz 2>/dev/null | head -1)"
   [ -n "$made" ] || { echo "ERROR: package-build.sh made no package in $dir" >&2; exit 1; }
   name="${made##*/}"
   mkdir -p "$DIST"
@@ -2125,7 +2219,7 @@ filc_usage() {
        "[--no-xz|--no-archive]" \
        "[--no-publish|--no-upload] [--publish|--upload] [--no-build|--no-rebuild]" \
        "[--export] [--prerequisites] [--archs=<list>|--arch=<list>]" \
-       "[--glibc|--gnu|--musl] [--install|--setup|--no-install|--no-setup] [--headless]" >&2
+       "[--glibc|--gnu|--musl|--cosmo] [--install|--setup|--no-install|--no-setup] [--headless]" >&2
   exit 2
 }
 
@@ -2187,6 +2281,7 @@ filc_parse_args() {
       --prerequisites)      MODE=prerequisites ;;
       --glibc|--gnu)        LIBC=glibc ;;
       --musl)               LIBC=musl ;;
+      --cosmo)              LIBC=cosmo ;;
       --install|--setup)    INSTALL=1 ;;
       --no-install|--no-setup) INSTALL=0 ;;
       --headless)           HEADLESS=1 ;;
@@ -2257,7 +2352,7 @@ filc_sync_arch() {
 }
 
 # Packs the build folder's toolchain as upstream does, unless --no-xz, and publishes it
-# with --publish: a --musl one here (see filc_upstream_package); a glibc one is
+# with --publish: a --musl or --cosmo one here (see filc_upstream_package); a glibc one is
 # the /opt/fil package, which the main loop packs (see filc_optfil_package).
 filc_pack_arch() {   # $1 = marker file of the run's start
   if [ -n "$NOXZ" ]; then echo "(--no-xz: skipping archive generation)"; return 0; fi
@@ -2318,9 +2413,10 @@ filc_main() {
       local found="" f
       for arch in $ARCHS; do
         filc_use_arch "$arch"
-        # The upstream-named packages: optfil-<version>-linux-<arch>.xz (glibc) and
-        # filc-<version>-linux-<arch>.xz (musl).
-        for f in "$DIST"/optfil-*-linux-"$ARCH".xz "$DIST"/filc-*-linux-"$ARCH".xz; do
+        # The upstream-named packages: optfil-<version>-linux-<arch>.xz (glibc),
+        # filc-<version>-linux-<arch>.xz (musl) and cosmo-filc-<version>-linux-<arch>.xz.
+        for f in "$DIST"/optfil-*-linux-"$ARCH".xz "$DIST"/filc-*-linux-"$ARCH".xz \
+                 "$DIST"/cosmo-filc-*-linux-"$ARCH".xz; do
           if [ -f "$f" ]; then found=1; filc_upload_archive "$(basename "$f")"; fi
         done
       done
@@ -2362,6 +2458,16 @@ filc_main() {
         *" $(filc_host_arch) "*)
           if [ "$LIBC" = glibc ] && [ "$INSTALL" = 1 ]; then filc_optfil_root; fi ;;
       esac
+      if [ "$LIBC" = cosmo ]; then
+        # Upstream builds cosmo on an x86_64 host only; it builds the aarch64 half of its
+        # fat programs itself (COSMOARCHES, see build_yolocosmo.sh), not as a foreign arch.
+        if [ "$(filc_host_arch)" != x86_64 ]; then
+          echo "ERROR: --cosmo builds on an x86_64 host only (as upstream's cosmo.txt says)." >&2
+          exit 1
+        fi
+        ARCHS=x86_64
+        filc_cosmo_fetch
+      fi
       filc_install_bison
       for arch in $ARCHS; do
         filc_use_arch "$arch"
