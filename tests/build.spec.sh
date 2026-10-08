@@ -631,6 +631,10 @@ mkdir -p "$BUILD_DIR/pizlonated-yolo-glibc-build" "$BUILD_DIR/pizlonated-user-gl
 for _kw in yolo libc pas; do filc_clean_portion "$_kw" > /dev/null; done
 expect 'yolo, libc and pas drop their build folders' '' \
     "$(ls -d "$BUILD_DIR/pizlonated-yolo-glibc-build" "$BUILD_DIR/pizlonated-user-glibc-build" "$BUILD_DIR/libpas/build" 2>/dev/null)"
+mkdir -p "$BUILD_DIR/optfil-yolo-glibc-build/layout" "$BUILD_DIR/optfil-user-glibc-build" "$BUILD_DIR/optfil-root/opt/fil"
+for _kw in optfil-yolo optfil-libc; do filc_clean_portion "$_kw" > /dev/null; done
+expect 'and so do the two /opt/fil glibcs, leaving the laid-out optfil-root/' 'yes' \
+    "$(ls -d "$BUILD_DIR/optfil-yolo-glibc-build" "$BUILD_DIR/optfil-user-glibc-build" 2>/dev/null)$([ -d "$BUILD_DIR/optfil-root/opt/fil" ] && echo yes)"
 expect 'cleaning never touches the installed pizfix/' yes "$([ -d "$BUILD_DIR/pizfix" ] && echo yes)"
 FILC_CLEAN_FILTER=''
 
@@ -1018,7 +1022,7 @@ expect 'its release text says it is usable wherever it is unpacked' \
 DIST=$_sb/dist-unused
 LIBC=glibc   # the default again, for the specs below
 
-test_section 'filc_warning / filc_optfil_root / filc_optfil_install -- /opt/fil as upstream'
+test_section 'filc_warning / filc_optfil_root -- root for /opt/fil'
 
 expect "filc_warning lays out a warning the way build-handler.sh does" \
     "$(printf '\nWARNING: first\n         second\n         third\n\n')" \
@@ -1044,34 +1048,216 @@ expect 'without --headless it asks for the password, and installs' 'install=1' "
 _root_run_status() { ( sudo() { false; }; filc_parse_args; filc_optfil_root ) > /dev/null 2>&1; }
 expect_returns 'a refused password stops the run' 1 _root_run_status
 
-# filc_optfil_install with sudo running its command as is, and optfil/'s scripts faked:
-# build_opt.sh notes it ran, build_package.sh leaves the package build_finish.sh makes.
-_opt=$_sb/opt-ws; DIST=$_sb/opt-dist; rm -rf "$_opt" "$DIST"
-mkdir -p "$_opt/optfil" "$_opt/build/bin"
-printf '#!/bin/sh\necho "clang version 20 (Fil-C 0.685 https://x/y.git abc)"\n' > "$_opt/build/bin/clang-20"
-printf '#!/bin/sh\necho build_opt\n' > "$_opt/optfil/build_opt.sh"
-printf '#!/bin/sh\necho build_package; printf x | xz > optfil-0.685-linux-%s.xz\n' "$_host" > "$_opt/optfil/build_package.sh"
-chmod +x "$_opt/build/bin/clang-20" "$_opt/optfil/"*.sh
+test_section 'filc_optfil_install / filc_optfil_package -- /opt/fil, as portions'
+
+# _opt_run: filc_optfil_install in a build folder whose two /opt/fil glibc builds are
+# faked (each says its name and writes its output folder), whose layout is faked, and
+# whose optfil/build_package.sh leaves the package build_finish.sh makes. sudo only says
+# what it would run (and what it reads); /opt/fil is never touched. _NOXZ, _PUB,
+# _INST, _CLEAN and _SYNC stand for --no-xz, --publish, --install (default on),
+# --clean and --sync.
+_opt=$_sb/opt-ws; _optroot=$_sb/opt-tree; DIST=$_sb/opt-dist; rm -rf "$_opt" "$_optroot" "$DIST"
+mkdir -p "$_opt/optfil" "$_optroot/projects/yolo-glibc-2.44" "$_optroot/projects/user-glibc-2.44" \
+         "$_optroot/filc/include"
+echo src > "$_optroot/projects/yolo-glibc-2.44/x.c"; echo src > "$_optroot/projects/user-glibc-2.44/x.c"
+printf 'package_name=optfil-0.685-$OS-$ARCH\n' > "$_opt/optfil/build_finish.sh"
+printf 'VERSION="0.685"\n' > "$_opt/optfil/setup.sh"
+printf '#!/bin/sh\necho "build_package@$OPTFIL_DESTDIR"; printf x | xz > optfil-0.685-linux-%s.xz\n' "$_host" \
+    > "$_opt/optfil/build_package.sh"
+chmod +x "$_opt/optfil/"*.sh
 _opt_run() {
-    ( sudo() { case "$1" in mkdir) echo "sudo mkdir $*" ;; *) "$@" ;; esac; }
+    ( sudo() { echo "sudo $*"; case " $* " in *" --files-from=- "*) sed 's/^/  /' ;; esac; }
       filc_upload_archive() { echo "publish@$1"; }
-      BUILD_DIR=$_opt; ARCH=$_host; CROSS=""; NOXZ="${_NOXZ:-}"; PUBLISH="${_PUB:-0}"
+      filc_runtime_env() { :; }
+      filc_build_optfil_yolo() {
+          echo built@yolo
+          mkdir -p optfil-yolo-glibc-build/layout/lib
+          echo new > optfil-yolo-glibc-build/layout/lib/ld-fil1-x.so
+          echo yolo > optfil-yolo-glibc-build/layout/lib/crt1.o
+      }
+      filc_build_optfil_libc() {
+          echo built@libc
+          mkdir -p optfil-user-glibc-build/install-root/opt/fil/lib
+          echo new > optfil-user-glibc-build/install-root/opt/fil/lib/libc.so.6666
+          echo user > optfil-user-glibc-build/install-root/opt/fil/lib/crt1.o
+      }
+      filc_optfil_layout() { echo layout; mkdir -p "$BUILD_DIR/optfil-root/opt/fil"; }
+      ROOT=$_optroot; BUILD_DIR=$_opt; ARCH=$_host; CROSS=""; NOXZ="${_NOXZ:-}"
+      PUBLISH="${_PUB:-0}"; INSTALL="${_INST:-1}"; FILC_CLEAN_FILTER="${_CLEAN:-}"
+      FILC_SYNC_FILTER="${_SYNC:-}"; BUILT=""; SYNCED=""
       : > "$_sb/opt-started"; sleep 1
       filc_optfil_install "$_sb/opt-started" ) 2>&1
 }
-_log=$(_opt_run)
-expect 'it runs upstream build_opt.sh, then build_package.sh, as root' 'build_opt build_package' \
-    "$(printf '%s\n' "$_log" | grep -E '^build_(opt|package)$' | tr '\n' ' ' | sed 's/ $//')"
-expect 'the package lands in dist/ under the upstream name' "optfil-0.685-linux-$_host.xz" \
-    "$(ls "$DIST")"
+_opt_steps() {
+    grep -E '^(built@.*|layout|build_package@.*|sudo rsync.*|  .*|publish@.*|synced: .*|\(optfil-.* waits .*)$' \
+        | tr '\n' '|' | sed 's/|$//'
+}
+expect 'it builds both glibcs as portions, lays out, packs with no root, then installs as root' \
+    "built@yolo|built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "$(_opt_run | _opt_steps)"
+expect 'the package lands in dist/ under the upstream name' "optfil-0.685-linux-$_host.xz" "$(ls "$DIST")"
+expect 'a portion whose sources did not change is kept' \
+    "layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "$(_opt_run | _opt_steps)"
+expect 'its manifest lists its whole output folder' \
+    'optfil-yolo-glibc-build/layout/lib/crt1.o optfil-yolo-glibc-build/layout/lib/ld-fil1-x.so' \
+    "$(tr '\n' ' ' < "$_opt/.filc-portions/optfil-yolo.list" | sed 's/ $//')"
+sleep 1; echo src2 > "$_optroot/projects/user-glibc-2.44/x.c"
+expect 'a changed source builds only its portion again' 'built@libc' \
+    "$(_opt_run | grep '^built@')"
+expect '--rebuild=yolo builds the yolo one again (optfil-yolo matches yolo)' 'built@yolo' \
+    "$(_CLEAN=yolo _opt_run | grep '^built@')"
+expect 'and drops its build folder first' 'gone' \
+    "$(mkdir -p "$_opt/optfil-yolo-glibc-build/obj"; _CLEAN=yolo _opt_run > /dev/null
+       [ -e "$_opt/optfil-yolo-glibc-build/obj" ] && echo kept || echo gone)"
 expect 'it publishes only with --publish' "0 publish@optfil-0.685-linux-$_host.xz" \
-    "$(printf '%s\n' "$_log" | grep -c '^publish@') $(_PUB=1 _opt_run | grep '^publish@')"
-expect '--no-xz installs without packing' 'build_opt' \
-    "$(_NOXZ=1 _opt_run | grep -E '^build_(opt|package)$' | tr '\n' ' ' | sed 's/ $//')"
+    "$(_opt_run | grep -c '^publish@') $(_PUB=1 _opt_run | grep '^publish@')"
+expect '--no-xz installs without packing' \
+    "layout|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "$(_NOXZ=1 _opt_run | _opt_steps)"
+sleep 1; echo src3 > "$_optroot/projects/yolo-glibc-2.44/x.c"
+expect '--sync=yolo puts the yolo files into /opt/fil right after they build, from the whole layout' \
+    "built@yolo|layout|sudo rsync -rlptD --files-from=- $_opt/optfil-root/opt/fil/ /opt/fil/|  lib/crt1.o|  lib/ld-fil1-x.so|synced: optfil-yolo (into /opt/fil)|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "$(_SYNC=yolo _opt_run | _opt_steps)"
+sleep 1; echo src4 > "$_optroot/projects/yolo-glibc-2.44/x.c"
+expect 'a filter that does not match it leaves /opt/fil until the entire build is done' \
+    "built@yolo|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "$(_SYNC='^yolo$' _opt_run | _opt_steps)"
+sleep 1; echo src5 > "$_optroot/projects/yolo-glibc-2.44/x.c"
+expect 'nor does --no-install, which only packs' "built@yolo|layout|build_package@$_opt/optfil-root" \
+    "$(_INST=0 _SYNC=yolo _opt_run | sed 's/^sudo rsync -rlptD --delete.*//' | _opt_steps)"
+rm -rf "$_opt/optfil-user-glibc-build"
+expect 'before the other /opt/fil portion ever built, it waits for the entire build too' \
+    "built@yolo|(optfil-yolo waits for the entire build: optfil-libc has not built in $_opt yet)|built@libc|layout" \
+    "$(_NOXZ=1 _CLEAN=yolo _SYNC=yolo _opt_run | grep -v '^sudo' | _opt_steps)"
 expect 'its release text says where it goes' \
     "Linux $_host, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc" \
     "$(filc_asset_description "optfil-0.685-linux-$_host.xz")"
+expect 'the /opt/fil portions are never synced into the tree' '' \
+    "$( ( ROOT=$_optroot; BUILD_DIR=$_opt; BUILT=' optfil-yolo optfil-libc'; SYNCED=''
+          filc_sync_dir() { echo "tree@$1"; }; filc_set_interpreters() { :; }; filc_sync_all ) 2>&1)"
 DIST=$_sb/dist-unused
+
+test_section 'filc_optfil_needs_configure -- from scratch only when a make file changed'
+
+_nc=$_sb/nc; rm -rf "$_nc"
+mkdir -p "$_nc/tree/projects/yolo-glibc-2.44/elf" "$_nc/ws/optfil-yolo-glibc-build" "$_nc/ws/.filc-portions"
+for _f in elf/dl-load.c elf/Makefile Makeconfig sysdeps.mk configure.ac; do
+    echo old > "$_nc/tree/projects/yolo-glibc-2.44/$_f"
+done
+_nc_needs() {
+    ( ROOT=$_nc/tree; BUILD_DIR=$_nc/ws; ARCH=$_host
+      cd "$BUILD_DIR" && filc_optfil_needs_configure optfil-yolo optfil-yolo-glibc-build ) && echo yes || echo no
+}
+expect 'a build folder that was never configured is' yes "$(_nc_needs)"
+: > "$_nc/ws/optfil-yolo-glibc-build/config.status"
+expect 'one that never finished a build (no manifest) carries on' no "$(_nc_needs)"
+sleep 1; : > "$_nc/ws/.filc-portions/optfil-yolo.list"; sleep 1
+expect 'nothing changed: not configured again' no "$(_nc_needs)"
+echo new > "$_nc/tree/projects/yolo-glibc-2.44/elf/dl-load.c"
+expect 'a changed C source: make rebuilds only what depends on it' no "$(_nc_needs)"
+for _f in elf/Makefile Makeconfig sysdeps.mk configure.ac; do
+    sleep 1; : > "$_nc/ws/.filc-portions/optfil-yolo.list"; sleep 1
+    echo new > "$_nc/tree/projects/yolo-glibc-2.44/$_f"
+    expect "a changed $_f: from scratch, as make tracks no flag it sets" yes "$(_nc_needs)"
+done
+
+test_section 'filc_build_optfil_yolo / filc_build_optfil_libc -- configured as upstream'"'"'s optfil/'
+
+_ob=$_sb/ob; rm -rf "$_ob"; mkdir -p "$_ob/ws"
+_ob_run() {   # $1 = the build function
+    ( ROOT=$_sb/no-tree; BUILD_DIR=$_ob/ws; ARCH=$_host; CROSS=""
+      filc_optfil_needs_configure() { return 0; }
+      filc_optfil_configure() { echo "configure@$1@$2@${CC:+CC=${CC%% *}}@${*:3}"; mkdir -p "$1"; }
+      filc_optfil_make() { echo "make@$1@$2"; _ob_install "$2"; }
+      cd "$BUILD_DIR" && "$1" ) 2>&1
+}
+_ob_install() { mkdir -p "$1/opt/fil/lib"; }
+expect 'the user glibc is configured as build_opt.sh does, compiled by the build folder'"'"'s clang' \
+    "configure@optfil-user-glibc-build@projects/user-glibc-2.44@CC=$_ob/ws/build/bin/clang@--prefix=/opt/fil --disable-werror --enable-kernel=4.19 --disable-nscd --disable-mathvec libc_cv_slibdir=/opt/fil/lib|make@optfil-user-glibc-build@$_ob/ws/optfil-user-glibc-build/install-root" \
+    "$(_ob_run filc_build_optfil_libc | grep -E '^(configure|make)@' | tr '\n' '|' | sed 's/|$//')"
+expect 'with sbin in /opt/fil/sbin' 'rootsbindir=/opt/fil/sbin' "$(cat "$_ob/ws/optfil-user-glibc-build/configparms")"
+if [ -n "$_cc" ]; then
+    # A fake yolo install: libc.so.6 and libm.so.6 (which needs it) as real shared
+    # objects for patchelf, the loader and the crt objects as plain files.
+    _ob_install() {
+        local lib="$1/opt/fil/lib"
+        mkdir -p "$lib"
+        echo 'int c(void) { return 0; }' > "$_ob/c.c"
+        echo 'int c(void); int m(void) { return c(); }' > "$_ob/m.c"
+        "$_cc" -shared -fPIC -Wl,-soname,libc.so.6 -o "$lib/libc.so.6" "$_ob/c.c"
+        "$_cc" -shared -fPIC -Wl,-soname,libm.so.6 -o "$lib/libm.so.6" "$_ob/m.c" "$lib/libc.so.6"
+        echo loader > "$lib/ld-fil1-$_host.so"; echo ns > "$lib/libc_nonshared.a"
+        echo crt > "$lib/crt1.o"; echo crt > "$lib/crti.o"
+    }
+    _log=$(_ob_run filc_build_optfil_yolo)
+    expect 'the yolo glibc is configured as build_opt.sh does, with the bundled kernel headers' \
+        "configure@optfil-yolo-glibc-build@projects/yolo-glibc-2.44@@--prefix=/opt/fil --disable-mathvec --disable-nscd libc_cv_slibdir=/opt/fil/lib --with-headers=$_ob/ws/optfil/kernel-include-$_host" \
+        "$(grep '^configure@' <<< "$_log")"
+    _lay=$_ob/ws/optfil-yolo-glibc-build/layout/lib
+    expect 'its layout holds what build_opt.sh puts in /opt/fil/lib' \
+        "crt1.o crti.o ld-fil1-$_host.so libyoloc.so libyoloc_nonshared.a libyolocimpl.so libyolom.so libyolomimpl.so" \
+        "$(ls "$_lay" | tr '\n' ' ' | sed 's/ $//')"
+    expect 'libc and libm under the libyolo* names' 'libyolocimpl.so libyolomimpl.so libyolocimpl.so' \
+        "$(patchelf --print-soname "$_lay/libyolocimpl.so") $(patchelf --print-soname "$_lay/libyolomimpl.so") $(patchelf --print-needed "$_lay/libyolomimpl.so" | grep yolo)"
+    case "$_host" in aarch64) _fmt=elf64-littleaarch64 ;; *) _fmt=elf64-x86-64 ;; esac
+    expect 'and the linker scripts of build_opt.sh' \
+        "OUTPUT_FORMAT($_fmt)|GROUP ( /opt/fil/lib/libyolocimpl.so /opt/fil/lib/libyoloc_nonshared.a  AS_NEEDED ( /opt/fil/lib/ld-fil1-$_host.so ) )|OUTPUT_FORMAT($_fmt)|GROUP ( /opt/fil/lib/libyolomimpl.so )" \
+        "$(cat "$_lay/libyoloc.so" "$_lay/libyolom.so" | tr '\n' '|' | sed 's/|$//')"
+    expect 'the install it was taken from is not kept' gone \
+        "$([ -e "$_ob/ws/optfil-yolo-glibc-build/install-root" ] && echo kept || echo gone)"
+else
+    test_skip 'the yolo glibc layout' 'no host C compiler for fake shared objects'
+fi
+
+test_section 'filc_optfil_layout -- the steps of build_opt.sh after its glibc builds'
+
+_ly=$_sb/ly; rm -rf "$_ly"; mkdir -p "$_ly"
+_ly_setup() {
+    local w=$_ly/ws a=$_host
+    mkdir -p "$w/optfil/kernel-include-$a/linux" "$w/optfil-yolo-glibc-build/layout/lib" \
+             "$w/optfil-user-glibc-build/install-root/opt/fil/lib" "$w/optfil-user-glibc-build/install-root/opt/fil/include" \
+             "$w/pizfix/lib" "$w/pizfix/stdfil-include" "$w/build/lib/clang/20/include" \
+             "$w/build/include/c++/v1" "$w/build/include/$a-unknown-linux-gnu/c++/v1" "$w/build/bin"
+    echo kernel > "$w/optfil/kernel-include-$a/linux/types.h"
+    printf '#!/bin/sh\necho "fix_clang@$OPTFIL_CLANG"; echo clang > "$OPTFIL/bin/filcc-clang-20"\n' > "$w/optfil/fix_clang.sh"
+    chmod +x "$w/optfil/fix_clang.sh"
+    echo yolo > "$w/optfil-yolo-glibc-build/layout/lib/crt1.o"
+    echo yolo > "$w/optfil-yolo-glibc-build/layout/lib/ld-fil1-$a.so"
+    echo user > "$w/optfil-user-glibc-build/install-root/opt/fil/lib/crt1.o"
+    echo user > "$w/optfil-user-glibc-build/install-root/opt/fil/lib/libc.so.6666"
+    echo user > "$w/optfil-user-glibc-build/install-root/opt/fil/include/stdio.h"
+    local f
+    for f in libpizlo.so filc_crt.o filc_mincrt.o crtbegin.o crtend.o libyolort.a libyolounwind.a \
+             libc++.so libc++.so.1.0 libc++abi.so.1.0 libc++.a libc++abi.a libc++experimental.a; do
+        echo boot > "$w/pizfix/lib/$f"
+    done
+    echo boot > "$w/pizfix/stdfil-include/stdfil.h"
+    echo boot > "$w/build/lib/clang/20/include/stddef.h"
+    echo boot > "$w/build/include/c++/v1/vector"
+    echo boot > "$w/build/include/$a-unknown-linux-gnu/c++/v1/__config_site"
+    mkdir -p "$w/optfil-root/opt/fil/lib"; echo old > "$w/optfil-root/opt/fil/lib/stale.so"
+}
+_ly_setup
+_log=$( ( BUILD_DIR=$_ly/ws; ARCH=$_host; CROSS=""; filc_clang_dir() { echo "$BUILD_DIR/build"; }
+          filc_optfil_layout ) 2>&1 )
+_o=$_ly/ws/optfil-root/opt/fil
+expect 'it puts the build folder'"'"'s clang in bin/ through fix_clang.sh' "fix_clang@$_ly/ws/build/bin/clang-20" \
+    "$(grep '^fix_clang@' <<< "$_log")"
+expect 'with the driver names of build_opt.sh' 'filcc-clang-20 filcc-clang-20 filcc-clang-20' \
+    "$(readlink "$_o/bin/filcc") $(readlink "$_o/bin/fil++") $(readlink "$_o/bin/filcpp")"
+expect 'the user glibc'"'"'s crt objects replace the yolo ones' 'user yolo' \
+    "$(cat "$_o/lib/crt1.o") $(cat "$_o/lib/ld-fil1-$_host.so")"
+expect 'the runtime, the crt objects and libc++ come from the build folder' 'boot boot boot boot' \
+    "$(cat "$_o/lib/libpizlo.so" "$_o/lib/filc_crt.o" "$_o/lib/libyolounwind.a" "$_o/lib/libc++.so.1.0" | tr '\n' ' ' | sed 's/ $//')"
+expect 'with the libc++ links of build_opt.sh' 'libc++.so.1.0 libc++abi.so.1.0 libc++abi.so.1' \
+    "$(readlink "$_o/lib/libc++.so.1") $(readlink "$_o/lib/libc++abi.so.1") $(readlink "$_o/lib/libc++abi.so")"
+expect 'the headers: kernel, stdfil, glibc, libc++ (both folders) and clang'"'"'s own' 'kernel boot user boot boot boot' \
+    "$(cat "$_o/include/linux/types.h" "$_o/include/stdfil.h" "$_o/include/stdio.h" "$_o/include/c++/v1/vector" \
+           "$_o/include/$_host-unknown-linux-gnu/c++/v1/__config_site" "$_o/lib/clang/20/include/stddef.h" | tr '\n' ' ' | sed 's/ $//')"
+expect 'it is marked as Fil-C-Light'"'"'s glibc toolchain' 'libc=glibc' "$(grep '^libc=' "$_o/share/fil-c-light.ini")"
+expect 'a file of an earlier layout is gone, and so is every scratch folder' 'gone 0' \
+    "$([ -e "$_o/lib/stale.so" ] && echo kept || echo gone) $(ls -d "$_ly"/ws/optfil-root.* 2>/dev/null | wc -l | tr -d ' ')"
 
 test_section 'filc_main -- each arch of --archs'
 
@@ -1502,13 +1688,15 @@ expect 'it cleans only the matching portions' 'gone kept' \
 expect 'and leaves the installed pizfix/ alone' yes "$([ -f "$BUILD_DIR/pizfix/lib/libpizlo.so" ] && echo yes)"
 mkdir -p "$BUILD_DIR/build/bin" "$BUILD_DIR/compiler-rt/build" "$BUILD_DIR/yolounwind" \
          "$BUILD_DIR/pizlonated-yolo-glibc-build" "$BUILD_DIR/libpas/build" \
-         "$BUILD_DIR/pizlonated-user-glibc-build"
+         "$BUILD_DIR/pizlonated-user-glibc-build" "$BUILD_DIR/optfil-yolo-glibc-build" \
+         "$BUILD_DIR/optfil-user-glibc-build"
 : > "$BUILD_DIR/yolounwind/yolounwind.o"
 ( filc_main --clean -d "$BUILD_DIR" ) > /dev/null 2>&1
 expect 'a bare --clean cleans every portion' '' \
     "$(ls -d "$BUILD_DIR/build" "$BUILD_DIR/compiler-rt/build" "$BUILD_DIR/yolounwind/yolounwind.o" \
              "$BUILD_DIR/pizlonated-yolo-glibc-build" "$BUILD_DIR/libpas/build" \
-             "$BUILD_DIR/pizlonated-user-glibc-build" 2>/dev/null)"
+             "$BUILD_DIR/pizlonated-user-glibc-build" "$BUILD_DIR/optfil-yolo-glibc-build" \
+             "$BUILD_DIR/optfil-user-glibc-build" 2>/dev/null)"
 expect 'and still leaves pizfix/ alone' yes "$([ -f "$BUILD_DIR/pizfix/lib/libpizlo.so" ] && echo yes)"
 expect 'with no build folder there is nothing to clean' 1 \
     "$( ( filc_main --clean -d "$_sb/no-such-ws" ) 2>&1 | grep -c 'nothing to clean')"
@@ -1521,7 +1709,7 @@ test_section 'filc_optfil_set_version -- upstream'"'"'s optfil scripts get the t
 _ov=$_sb/ov; rm -rf "$_ov"; mkdir -p "$_ov/optfil"
 printf 'package_name=optfil-0.680-$OS-$ARCH\n' > "$_ov/optfil/build_finish.sh"
 printf 'VERSION="0.680"\nARCH=x86_64\n' > "$_ov/optfil/setup.sh"
-: > "$_ov/optfil/build_opt.sh"
+: > "$_ov/optfil/build_package.sh"
 ( BUILD_DIR=$_ov; filc_optfil_set_version )
 expect 'the package name and setup.sh'"'"'s VERSION say the upstream version' \
     'package_name=optfil-0.685-$OS-$ARCH|VERSION="0.685"' \
