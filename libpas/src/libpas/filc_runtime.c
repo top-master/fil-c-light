@@ -2199,6 +2199,8 @@ void filc_store_ptr_atomic_outline(filc_thread* my_thread, filc_ptr ptr, filc_pt
     filc_store_ptr_atomic(my_thread, ptr, 0, value);
 }
 
+pas_lock filc_ptr_atomic_locks[FILC_PTR_ATOMIC_NUM_LOCKS];
+
 bool filc_weak_cas_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
                        filc_ptr expected, filc_ptr new_value)
 {
@@ -2206,26 +2208,36 @@ bool filc_weak_cas_ptr(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
     filc_check_native_access(ptr, sizeof(void*), filc_write_access);
     filc_lower_or_box* lower_or_box_ptr = filc_ptr_ensure_lower_or_box_ptr(my_thread, ptr);
     filc_store_barrier(my_thread, filc_ptr_object(new_value));
+    pas_lock* lock = filc_ptr_atomic_lock_for(filc_ptr_ptr(ptr));
+    filc_atomic_box* new_box = NULL;
     for (;;) {
+        pas_lock_lock(lock);
         filc_lower_or_box lower_or_box = filc_lower_or_box_load(lower_or_box_ptr);
         bool did_succeed;
         if (filc_lower_or_box_is_box(lower_or_box)) {
             did_succeed = filc_atomic_box_cas_weak_without_barrier(
                 filc_lower_or_box_get_box(lower_or_box), expected, new_value);
-        } else if (*(void**)filc_ptr_ptr(ptr) != filc_ptr_ptr(expected))
+        } else if (*(void**)filc_ptr_ptr(ptr) != filc_ptr_ptr(expected)) {
+            pas_lock_unlock(lock);
             return false;
-        else {
+        } else if (!new_box) {
+            /* Creates the box outside the lock, then tries again. */
+            pas_lock_unlock(lock);
+            new_box = filc_atomic_box_create_for_ptr_store(my_thread, new_value);
+            continue;
+        } else {
             if (!filc_lower_or_box_cas_weak_unbarriered(
-                    lower_or_box_ptr, lower_or_box,
-                    filc_lower_or_box_create_box(
-                        filc_atomic_box_create_for_ptr_store(my_thread, new_value))))
+                    lower_or_box_ptr, lower_or_box, filc_lower_or_box_create_box(new_box))) {
+                pas_lock_unlock(lock);
                 continue;
+            }
             did_succeed = true;
         }
         if (did_succeed) {
             pas_store_store_fence();
             *(void**)filc_ptr_ptr(ptr) = filc_ptr_ptr(new_value);
         }
+        pas_lock_unlock(lock);
         return did_succeed;
     }
 }
@@ -2237,7 +2249,10 @@ filc_ptr filc_strong_cas_ptr_with_manual_tracking(
     filc_check_native_access(ptr, sizeof(void*), filc_write_access);
     filc_lower_or_box* lower_or_box_ptr = filc_ptr_ensure_lower_or_box_ptr(my_thread, ptr);
     filc_store_barrier(my_thread, filc_ptr_object(new_value));
+    pas_lock* lock = filc_ptr_atomic_lock_for(filc_ptr_ptr(ptr));
+    filc_atomic_box* new_box = NULL;
     for (;;) {
+        pas_lock_lock(lock);
         filc_lower_or_box lower_or_box = filc_lower_or_box_load(lower_or_box_ptr);
         filc_ptr old_value;
         if (filc_lower_or_box_is_box(lower_or_box)) {
@@ -2248,18 +2263,25 @@ filc_ptr filc_strong_cas_ptr_with_manual_tracking(
             if (old_ptr != filc_ptr_ptr(expected)) {
                 old_value = filc_ptr_create_with_lower_and_ptr_and_manual_tracking(
                     filc_lower_or_box_get_lower(lower_or_box), old_ptr);
+            } else if (!new_box) {
+                /* Creates the box outside the lock, then tries again. */
+                pas_lock_unlock(lock);
+                new_box = filc_atomic_box_create_for_ptr_store(my_thread, new_value);
+                continue;
             } else {
                 if (!filc_lower_or_box_cas_weak_unbarriered(
-                        lower_or_box_ptr, lower_or_box,
-                        filc_lower_or_box_create_box(
-                            filc_atomic_box_create_for_ptr_store(my_thread, new_value))))
+                        lower_or_box_ptr, lower_or_box, filc_lower_or_box_create_box(new_box))) {
+                    pas_lock_unlock(lock);
                     continue;
+                }
                 old_value = filc_ptr_create_with_lower_and_ptr_and_manual_tracking(
                     filc_lower_or_box_get_lower(lower_or_box), filc_ptr_ptr(expected));
             }
         }
-        if (filc_ptr_ptr(old_value) == filc_ptr_ptr(expected))
+        if (filc_ptr_ptr(old_value) == filc_ptr_ptr(expected)) {
             *(void**)filc_ptr_ptr(ptr) = filc_ptr_ptr(new_value);
+        }
+        pas_lock_unlock(lock);
         return old_value;
     }
 }
