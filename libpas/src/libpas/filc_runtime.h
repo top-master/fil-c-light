@@ -3306,23 +3306,53 @@ static inline void filc_store_ptr_at(filc_thread* my_thread, filc_ptr ptr, void*
     filc_store_ptr(my_thread, filc_ptr_with_ptr(ptr, ptr_ptr), 0, value);
 }
 
+/** Keeps the raw word of an atomic pointer in step with its atomic box: every atomic store,
+   compare-and-swap, or exchange of a pointer holds the lock of its word while it updates the
+   box and then the raw word. Hence the raw word changes in the same order as the box, which
+   matters to whoever reads the raw word on its own, such as the kernel's futex comparing the
+   word a waiter expects. Atomic loads read the box and take no lock.
+
+   Each lock covers the words whose address maps to it. Nothing that allocates, or that waits
+   for a handshake, runs while a lock is held: a needed atomic box is created before taking
+   the lock. */
+#define FILC_PTR_ATOMIC_NUM_LOCKS 256
+
+PAS_API extern pas_lock filc_ptr_atomic_locks[FILC_PTR_ATOMIC_NUM_LOCKS];
+
+static inline pas_lock* filc_ptr_atomic_lock_for(void* ptr_ptr)
+{
+    return filc_ptr_atomic_locks
+        + ((uintptr_t)ptr_ptr / sizeof(void*)) % FILC_PTR_ATOMIC_NUM_LOCKS;
+}
+
 static inline void filc_store_ptr_atomic_with_ptr_pair(filc_thread* my_thread,
                                                        void** ptr_ptr,
                                                        filc_lower_or_box* lower_or_box_ptr,
                                                        filc_ptr value)
 {
     filc_store_barrier(my_thread, filc_ptr_object(value));
-    filc_lower_or_box lower_or_box = filc_lower_or_box_load(lower_or_box_ptr);
-    if (filc_lower_or_box_is_box(lower_or_box)) {
-        filc_atomic_box_store_without_barrier(
-            filc_lower_or_box_get_box(lower_or_box), value);
-    } else {
-        filc_lower_or_box_store_unbarriered(
-            lower_or_box_ptr,
-            filc_lower_or_box_create_box(filc_atomic_box_create_for_ptr_store(my_thread, value)));
+    pas_lock* lock = filc_ptr_atomic_lock_for(ptr_ptr);
+    filc_atomic_box* new_box = NULL;
+    for (;;) {
+        pas_lock_lock(lock);
+        filc_lower_or_box lower_or_box = filc_lower_or_box_load(lower_or_box_ptr);
+        if (filc_lower_or_box_is_box(lower_or_box)) {
+            filc_atomic_box_store_without_barrier(
+                filc_lower_or_box_get_box(lower_or_box), value);
+        } else if (new_box) {
+            filc_lower_or_box_store_unbarriered(
+                lower_or_box_ptr, filc_lower_or_box_create_box(new_box));
+        } else {
+            /* Creates the box outside the lock, then tries again. */
+            pas_lock_unlock(lock);
+            new_box = filc_atomic_box_create_for_ptr_store(my_thread, value);
+            continue;
+        }
+        pas_store_store_fence();
+        *ptr_ptr = filc_ptr_ptr(value);
+        pas_lock_unlock(lock);
+        return;
     }
-    pas_store_store_fence();
-    *ptr_ptr = filc_ptr_ptr(value);
 }
 
 static inline void filc_store_ptr_atomic(filc_thread* my_thread, filc_ptr ptr, ptrdiff_t offset,
