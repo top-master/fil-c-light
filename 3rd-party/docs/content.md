@@ -13,8 +13,8 @@ just pure Fil-C functionality -- see details below.
   which builds against Linux 7.0 kernel headers; 2.40 does not).
 - The `build_*.sh` / `configure_*.sh` scripts for the steps above, and `build.sh`,
   the driver that runs them (see "Building").
-- `compiler/`: a removable submodule with the LLVM + Clang sources of the Fil-C
-  compiler, needed only to build that compiler from source.
+- `3rd-party/fil-c-llvm/`: a removable submodule with the LLVM + Clang sources of
+  the Fil-C compiler, needed only to build that compiler from source.
 
 Both libc families are supported, glibc and musl, the same as full Fil-C. Upstream's
 third flavor, cosmopolitan libc, is not in this tree: it is the optional
@@ -26,16 +26,16 @@ third flavor, cosmopolitan libc, is not in this tree: it is the optional
 
 Every ported application (`projects/*` other than the libc slices) is left out to
 keep this tree small; build those from the full Fil-C tree if you need them. The C++
-standard library (libc++ and libc++abi) is built from the `compiler/` submodule's
-runtime sources and ships with the toolchain. The compiler sources are not in this
-tree itself: they live in the `compiler/` submodule, which is fetched only when the
-compiler is built.
+standard library (libc++ and libc++abi) is built from the runtime sources of the
+`3rd-party/fil-c-llvm/` submodule and ships with the toolchain. The compiler sources
+are not in this tree itself: they live in the `3rd-party/fil-c-llvm/` submodule,
+which is fetched only when the compiler is built.
 
 
-## The compiler: prebuilt, or built from `compiler/`
+## The compiler: prebuilt, or built from `3rd-party/fil-c-llvm/`
 
 `./build.sh` fetches a prebuilt Fil-C toolchain, the published optfil package of
-this tree's upstream version, from the `compiler/` repository's releases and lays it
+this tree's upstream version, from the `fil-c-llvm` repository's releases and lays it
 out as the instrumenting Clang in `build/` plus the runtime in `pizfix/`;
 `./build.sh --no-build` installs it at `/opt/fil` instead (with `--no-install`, it
 only unpacks it into the tree). So most machines never compile LLVM. Building it

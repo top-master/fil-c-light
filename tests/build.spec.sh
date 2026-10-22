@@ -74,6 +74,29 @@ _parse --nightly
 expect 'a build syncs by default, and publishes only when asked' '0 1' "$PUBLISH $SYNC"
 _parse --export
 expect '--export only exports, without publishing' 'export 0' "$MODE $PUBLISH"
+_parse --publish-git --no-build
+expect '--publish-git leaves the mode to the other flags' 'download 1' "$MODE $PUBLISH_GIT"
+_parse --publish-git --publish --nightly
+expect 'and so it does with a build' 'source 1 1' "$MODE $PUBLISH $PUBLISH_GIT"
+_parse --no-download
+expect '--no-download keeps the mode, and fetches nothing' 'light 0' "$MODE $DOWNLOAD"
+_parse --no-download --download
+expect '--download fetches again' 'light 1' "$MODE $DOWNLOAD"
+_parse --only
+expect '--only disables all default operations' 'download 0 0 0 0' \
+    "$MODE $DOWNLOAD $INSTALL $SYNC $PUBLISH"
+_parse --publish-git --only
+expect '--only before or after a flag leaves what that flag asks for' 'download 0 1' \
+    "$MODE $DOWNLOAD $PUBLISH_GIT"
+_parse --only --publish
+expect '--only --publish publishes dist/' 'upload 1' "$MODE $PUBLISH"
+_parse --only --build --install
+expect '--only --build builds, and installs only when asked' 'light 0 1 0' \
+    "$MODE $DOWNLOAD $INSTALL $SYNC"
+expect '--help names no internal helper' 0 \
+    "$(bash "$_root/build.sh" --help | grep -c -- '--publish-git\|--no-download\|--download')"
+expect '--help --internal also lists them' '1 1 1' \
+    "$(for _f in --publish-git --no-download --download; do bash "$_root/build.sh" --help --internal | grep -c "^#   ./build.sh $_f "; done | tr '\n' ' ' | sed 's/ $//')"
 
 test_section 'filc_main -- the run marker exists only where an archive is packed'
 
@@ -311,7 +334,7 @@ test_section 'filc_compiler_repo_slug / filc_release_base_urls'
 ROOT=$_sb/tree
 _slug_with() {   # $1 = submodule URL, [$2 = origin URL]
     _repo "$ROOT" ${2:+origin "$2"}
-    printf '[submodule "compiler"]\n\tpath = compiler\n\turl = %s\n' "$1" > "$ROOT/.gitmodules"
+    printf '[submodule "compiler"]\n\tpath = 3rd-party/fil-c-llvm\n\turl = %s\n' "$1" > "$ROOT/.gitmodules"
     filc_compiler_repo_slug
 }
 expect 'an https URL gives <owner>/<repo>' owner/fil-c-llvm \
@@ -332,11 +355,11 @@ expect 'FILC_LIGHT_RELEASE_URL overrides them' https://mirror/x \
 test_section 'filc_github_token -- found through git remote'
 
 _repo "$ROOT" origin https://TREE@github.com/owner/fil-c-light.git
-_repo "$ROOT/compiler" origin https://LLVM@github.com/owner/fil-c-llvm.git
+_repo "$ROOT/3rd-party/fil-c-llvm" origin https://LLVM@github.com/owner/fil-c-llvm.git
 expect "the compiler repo's own remote wins" LLVM "$(filc_github_token owner/fil-c-llvm)"
-_repo "$ROOT/compiler" origin https://user:PAIR@github.com/owner/fil-c-llvm.git
+_repo "$ROOT/3rd-party/fil-c-llvm" origin https://user:PAIR@github.com/owner/fil-c-llvm.git
 expect 'a <user>:<token> URL gives the token' PAIR "$(filc_github_token owner/fil-c-llvm)"
-_repo "$ROOT/compiler" origin git@github.com:owner/fil-c-llvm.git
+_repo "$ROOT/3rd-party/fil-c-llvm" origin git@github.com:owner/fil-c-llvm.git
 expect 'else a remote of the same owner is used' TREE "$(filc_github_token owner/fil-c-llvm)"
 expect 'a remote of another owner is never used' '' "$(filc_github_token other/fil-c-llvm)"
 _repo "$ROOT" origin https://github.com/owner/fil-c-light.git
@@ -359,7 +382,7 @@ curl() {
     [ -f "$_srv/${url##*/}" ] && cp "$_srv/${url##*/}" "$out"
 }
 ROOT=$_sb/dl-tree; TOOLS=$_sb/dl-tools; ARCH=x86_64
-mkdir -p "$ROOT/compiler/clang/lib/Basic"
+mkdir -p "$ROOT/3rd-party/fil-c-llvm/clang/lib/Basic"
 _archive() {   # $1 = file name, $2 = text the fake clang prints (_NOSETUP: no setup.sh)
     local top=$_sb/pack/optfil-pkg
     rm -rf "$_sb/pack"
@@ -410,6 +433,17 @@ echo garbage > "$_srv/optfil-0.685-linux-x86_64.xz"
 rm -rf "$ROOT/build" "$ROOT/pizfix"
 expect_returns 'a broken archive fails the download' 1 filc_download_toolchain
 expect 'and lays nothing out' '' "$(ls "$ROOT/build/bin" 2>/dev/null)"
+_archive optfil-0.685-linux-x86_64.xz prebuilt
+sed -i 's/^echo /echo "libstdc++.so.6: cannot open shared object file"; exit 127; echo /' \
+    "$_sb/pack/fil/bin/filcc-clang-20"
+tar -C "$_sb/pack" -cJf "$_sb/pack/optfil-pkg/fil.tar.xz" fil
+tar -C "$_sb/pack" -cJf "$_srv/optfil-0.685-linux-x86_64.xz" optfil-pkg
+_rc=0
+_log=$(filc_download_toolchain "$_sb/dl-stage" 2>&1) || _rc=$?
+expect 'a clang that does not run here fails the download, saying why' '1 yes yes' \
+    "$_rc $(grep -q 'libstdc++.so.6: cannot open' <<< "$_log" && echo yes) $(grep -q '^ERROR: the clang of the prebuilt toolchain does not run here.$' <<< "$_log" && echo yes)"
+expect 'and says no toolchain is ready' 0 "$(grep -c 'toolchain ready' <<< "$_log")"
+rm -rf "$_sb/dl-stage"
 _archive optfil-0.685-linux-x86_64.xz prebuilt
 # With no URL given, the release of the upstream version first, then the latest one.
 _tries=$_sb/tries
@@ -516,20 +550,24 @@ test_section 'filc_mirror -- the build folder'
 ROOT=$_sb/mirror-tree
 BUILD_DIR=$_sb/mirror-ws
 rm -rf "$ROOT" "$BUILD_DIR"
-mkdir -p "$ROOT/.git" "$ROOT/libpas" "$ROOT/compiler/llvm" "$ROOT/filc/include" \
+mkdir -p "$ROOT/.git" "$ROOT/libpas" "$ROOT/3rd-party/fil-c-llvm/llvm" "$ROOT/filc/include" \
          "$ROOT/pizfix/lib" "$ROOT/build/bin" "$ROOT/dist" "$ROOT/tmp-build"
 echo src > "$ROOT/libpas/x.c"
 echo run > "$ROOT/build_runtime.sh"
-: > "$ROOT/compiler/llvm/CMakeLists.txt"
+: > "$ROOT/3rd-party/fil-c-llvm/llvm/CMakeLists.txt"
 : > "$ROOT/filc/include/stdfil.h"
 echo tree > "$ROOT/pizfix/lib/libpizlo.so"
 : > "$ROOT/build/bin/clang-20"
 : > "$ROOT/dist/a.xz"
-ln -s compiler/llvm "$ROOT/llvm"
+ln -s 3rd-party/fil-c-llvm/llvm "$ROOT/llvm"
 filc_mirror
-expect 'compiler/ is linked, not copied' "$ROOT/compiler" "$(readlink "$BUILD_DIR/compiler")"
+expect 'fil-c-llvm/ is linked, not copied' "$ROOT/3rd-party/fil-c-llvm" "$(readlink "$BUILD_DIR/3rd-party/fil-c-llvm")"
 expect 'filc/ is linked, not copied' "$ROOT/filc" "$(readlink "$BUILD_DIR/filc")"
-expect 'llvm resolves through the linked compiler/' yes \
+ln -s "$ROOT/compiler" "$BUILD_DIR/compiler"
+filc_mirror
+expect 'a link to where the compiler sources were before is removed' no \
+    "$([ -L "$BUILD_DIR/compiler" ] && echo yes || echo no)"
+expect 'llvm resolves through the linked fil-c-llvm/' yes \
     "$([ -f "$BUILD_DIR/llvm/CMakeLists.txt" ] && echo yes)"
 expect 'what upstream writes into is copied' 'src file' \
     "$(cat "$BUILD_DIR/libpas/x.c") $([ -L "$BUILD_DIR/libpas" ] && echo link || echo file)"
@@ -553,7 +591,7 @@ expect 'a source the tree deleted is removed from the build folder too' no \
     "$([ -e "$BUILD_DIR/libpas/y.S" ] && echo yes || echo no)"
 expect 'while build output stays' built "$(cat "$BUILD_DIR/libpas/x.o")"
 expect 'as do the folders the mirror leaves out' 'ws yes' \
-    "$(cat "$BUILD_DIR/pizfix/lib/libpizlo.so") $([ -L "$BUILD_DIR/compiler" ] && echo yes)"
+    "$(cat "$BUILD_DIR/pizfix/lib/libpizlo.so") $([ -L "$BUILD_DIR/3rd-party/fil-c-llvm" ] && echo yes)"
 
 
 # ---- specs: syncing built portions into the tree ---------------------------
@@ -756,16 +794,25 @@ test_section 'filc_asset_description / the release page text'
 
 ARCH=x86_64
 expect 'an optfil package is the glibc /opt/fil distribution, its clang on its own glibc' \
-    'Linux x86_64, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc' \
+    'Linux x86_64, glibc, installed at `/opt/fil`
+Usage: `sudo ./setup.sh --unattended`
+Its clang runs on its own glibc' \
     "$(filc_asset_description optfil-0.685-linux-x86_64.xz)"
 filc_clang_glibc_floor() { echo 2.38; }
 expect 'a filc- package is the musl one, with the host glibc its clang needs' \
-    'Linux aarch64, musl, usable wherever it is unpacked (./setup.sh); its clang runs on a host glibc >= 2.38' \
+    'Linux aarch64, musl, usable wherever it is unpacked
+Usage: `./setup.sh`
+Its clang runs on a host glibc 2.38 or newer' \
     "$(filc_asset_description filc-0.685-linux-aarch64.xz)"
 filc_clang_glibc_floor() { :; }
-expect 'without a known floor it names no host glibc' 'Linux x86_64, musl, usable wherever it is unpacked (./setup.sh)' \
+expect 'without a known floor it names no host glibc' 'Linux x86_64, musl, usable wherever it is unpacked
+Usage: `./setup.sh`' \
     "$(filc_asset_description filc-0.685-linux-x86_64.xz)"
 expect 'any other name says its arch only' 'Linux x86_64' "$(filc_asset_description other-x86_64.xz)"
+expect 'git-clone.xz says what it holds, and its usage in code' \
+    'The git repository of fil-c-llvm
+Usage: `tar -xJf git-clone.xz`, then `git -C fil-c-llvm checkout -f`' \
+    "$(filc_asset_description git-clone.xz)"
 
 _page() {   # the release is the latest one unless _OLDER says otherwise
     local r="$1"; shift
@@ -778,7 +825,7 @@ _rel='{"name": "", "body": "", "assets": [
   {"name": "filc-0.685-linux-aarch64.xz", "label": ""}]}'
 _out=$(_page "$_rel")
 _body=$(printf '%s' "$_out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["body"])')
-expect 'the page names the release after both versions, nothing else' 'Fil-C-Light 1.0.0 (upstream 0.685)' \
+expect 'the page names the release after both versions, nothing else' 'FCL 1.0.0 (upstream 0.685)' \
     "$(printf '%s' "$_out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
 expect 'each asset is listed in name order, by an old label, else by its name' \
     "- \`filc-0.685-linux-aarch64.xz\`: Linux aarch64
@@ -796,9 +843,20 @@ _same=$(printf '%s' "$_out" | python3 -c '
 import json, sys
 p = json.load(sys.stdin); r = json.loads(sys.argv[1]); r.update(p); print(json.dumps(r))' "$_rel")
 expect 'an up-to-date page asks for no change' '' "$(_page "$_same")"
+_rel4='{"name": "", "body": "Assets:\n- `filc-0.685-linux-x86_64.xz`: Linux x86_64, musl\n  - Usage: kept\n- `zz.xz`: Z", "assets": [
+  {"name": "git-clone.xz", "label": ""}, {"name": "filc-0.685-linux-x86_64.xz", "label": ""},
+  {"name": "zz.xz", "label": ""}]}'
+expect 'the further lines of a description are its sub-bullets, kept as they are' \
+    "- \`filc-0.685-linux-x86_64.xz\`: Linux x86_64, musl
+  - Usage: kept
+- \`zz.xz\`: Z
+- \`git-clone.xz\`: The repository
+  - Usage: \`tar\`" \
+    "$(_page "$_rel4" git-clone.xz 'The repository
+Usage: `tar`' | python3 -c 'import json,sys; print(json.load(sys.stdin)["body"])' | grep '^ *- `\|^  - ')"
 _rel2='{"name": "", "body": "", "assets": [{"name": "optfil-0.685-linux-x86_64.xz", "label": ""},
   {"name": "optfil-0.685-linux-aarch64.xz", "label": ""}]}'
-expect 'the name stays the versions alone, whatever archs its assets are for' 'Fil-C-Light 1.0.0 (upstream 0.685)' \
+expect 'the name stays the versions alone, whatever archs its assets are for' 'FCL 1.0.0 (upstream 0.685)' \
     "$(_page "$_rel2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
 _rel3='{"name": "", "body": "Assets:\n- `optfil-0.685-linux-x86_64.xz`: Linux x86_64, kept\n- `optfil-0.685-linux-aarch64.xz`: old text", "assets": [
   {"name": "optfil-0.685-linux-x86_64.xz", "label": "optfil-0.685-linux-x86_64.xz"},
@@ -864,9 +922,9 @@ _rel_get() { python3 -c "import json,sys; r=json.load(open('$_gh/release.json'))
 
 ROOT=$_sb/pub-tree; BUILD_DIR=$_sb/pub-ws; DIST=$ROOT/dist
 _repo "$ROOT" origin https://github.com/owner/fil-c-light.git
-printf '[submodule "compiler"]\n\tpath = compiler\n\turl = https://github.com/owner/fil-c-llvm.git\n' \
+printf '[submodule "compiler"]\n\tpath = 3rd-party/fil-c-llvm\n\turl = https://github.com/owner/fil-c-llvm.git\n' \
     > "$ROOT/.gitmodules"
-_repo "$ROOT/compiler" origin https://SECRET-TOKEN@github.com/owner/fil-c-llvm.git
+_repo "$ROOT/3rd-party/fil-c-llvm" origin https://SECRET-TOKEN@github.com/owner/fil-c-llvm.git
 mkdir -p "$DIST" "$BUILD_DIR/build/bin"
 printf '#!/bin/sh\necho "clang version 20.1.8 (Fil-C 0.685 https://github.com/owner/fil-c-llvm.git abc)"\n' \
     > "$BUILD_DIR/build/bin/clang-20"
@@ -878,8 +936,8 @@ expect 'a missing release is created' 1 "$(printf '%s\n' "$_log" | grep -c '^pub
 expect 'the archive is uploaded with its file name as its label' \
     'optfil-0.685-linux-x86_64.xz|optfil-0.685-linux-x86_64.xz' \
     "$(_rel_get '"|".join([r["assets"][0]["name"], r["assets"][0]["label"]])')"
-expect 'the page is regenerated from the assets, with its description' 'Fil-C-Light 1.0.0 (upstream 0.685) yes' \
-    "$(_rel_get 'r["name"] + (" yes" if "- `optfil-0.685-linux-x86_64.xz`: Linux x86_64, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc" in r["body"] else " no")')"
+expect 'the page is regenerated from the assets, with its description' 'FCL 1.0.0 (upstream 0.685) yes' \
+    "$(_rel_get 'r["name"] + (" yes" if "- `optfil-0.685-linux-x86_64.xz`: Linux x86_64, glibc, installed at `/opt/fil`\n  - Usage: `sudo ./setup.sh --unattended`\n  - Its clang runs on its own glibc" in r["body"] else " no")')"
 _log=$(filc_upload_archive optfil-0.685-linux-x86_64.xz 2>&1)
 expect 'an identical asset is kept, only relabelled' '1 1' \
     "$(printf '%s\n' "$_log" | grep -c 'same sha256'; ) $(_rel_get 'len(r["assets"])')"
@@ -889,11 +947,121 @@ echo two > "$DIST/optfil-0.685-linux-x86_64.xz"
 _log=$(filc_upload_archive optfil-0.685-linux-x86_64.xz 2>&1)
 expect 'a different archive replaces the older asset' "1 1 sha256:$(sha256sum "$DIST/optfil-0.685-linux-x86_64.xz" | cut -d' ' -f1)" \
     "$(printf '%s\n' "$_log" | grep -c 'replacing the older') $(_rel_get 'str(len(r["assets"])) + " " + r["assets"][0]["digest"]')"
+# _rel_add <name> <description>
+#
+# Adds the asset <name> to the fake release, with <description> as its line on the
+# release's page.
+_rel_add() {
+    python3 - "$_gh/release.json" "$1" "$2" <<'PY'
+import json
+import sys
+
+path, name, description = sys.argv[1:]
+with open(path) as file:
+    release = json.load(file)
+release["assets"].append({"id": 900, "name": name, "label": "", "digest": "sha256:x"})
+release["body"] += "\n- `%s`: %s" % (name, description)
+with open(path, "w") as file:
+    json.dump(release, file)
+PY
+}
+
+# _rel_asset <name>
+#
+# Prints the asset <name> of the fake release as `<name>|<label>`, or nothing.
+_rel_asset() {
+    python3 - "$_gh/release.json" "$1" <<'PY'
+import json
+import sys
+
+path, name = sys.argv[1:]
+with open(path) as file:
+    release = json.load(file)
+for asset in release["assets"]:
+    if asset["name"] == name:
+        print("%s|%s" % (asset["name"], asset["label"]))
+PY
+}
+
+# _rel_line <name>
+#
+# Prints the line of the asset <name> on the fake release's page, or nothing.
+_rel_line() {
+    python3 - "$_gh/release.json" "$1" <<'PY'
+import json
+import sys
+
+path, name = sys.argv[1:]
+with open(path) as file:
+    release = json.load(file)
+prefix = "- `%s`: " % name
+for line in release["body"].splitlines():
+    if line.startswith(prefix):
+        print(line)
+PY
+}
+
+_rel_add other.xz 'Another archive'
+echo three > "$DIST/optfil-0.685-linux-x86_64.xz"
+_log=$(filc_upload_archive optfil-0.685-linux-x86_64.xz 2>&1)
+expect 'publishing a package leaves an asset of another name as it is' 'other.xz|' \
+    "$(_rel_asset other.xz)"
+expect 'and its description on the page' '- `other.xz`: Another archive' \
+    "$(_rel_line other.xz)"
+
+# --publish-git packs the compiler repository, then publishes it. Its
+# checkout keeps the git folder in the tree's .git/modules, as a submodule does.
+git -C "$ROOT/3rd-party/fil-c-llvm" -c user.name=spec -c user.email=spec@example.invalid \
+    commit -q --allow-empty -m one
+mkdir -p "$ROOT/.git/modules"
+mv "$ROOT/3rd-party/fil-c-llvm/.git" "$ROOT/.git/modules/compiler"
+echo 'gitdir: ../../.git/modules/compiler' > "$ROOT/3rd-party/fil-c-llvm/.git"
+git --git-dir="$ROOT/.git/modules/compiler" config core.worktree ../../../3rd-party/fil-c-llvm
+python3 - "$_gh/release.json" <<'PY'
+import json
+import re
+import sys
+
+path = sys.argv[1]
+with open(path) as file:
+    release = json.load(file)
+release["body"] = re.sub(r"^(- `optfil-0.685-linux-x86_64.xz`: ).*$", r"\1old text",
+                         release["body"], flags=re.M)
+with open(path, "w") as file:
+    json.dump(release, file)
+PY
+_log=$(filc_publish_git 2>&1)
+_unpack=$_sb/git-clone-unpack
+rm -rf "$_unpack"; mkdir -p "$_unpack"
+tar -C "$_unpack" -xJf "$DIST/git-clone.xz"
+expect 'the archive holds the repository as fil-c-llvm/.git' 'fil-c-llvm/.git/config' \
+    "$(cd "$_unpack" && ls fil-c-llvm/.git/config)"
+_git_config() { git --git-dir="$_unpack/fil-c-llvm/.git" config "$1"; }
+_has_dir() { [ -d "$_unpack/fil-c-llvm/.git/$1" ] && echo yes || echo no; }
+expect 'its origin is the GitHub URL, without a token' 'https://github.com/owner/fil-c-llvm.git' \
+    "$(_git_config remote.origin.url)"
+expect 'it is a plain .git, no bare mirror, and names no work tree' 'false||' \
+    "$(_git_config core.bare)|$(_git_config remote.origin.mirror)|$(_git_config core.worktree)"
+expect 'no token, reflog, hook or index is packed' '0 no no no' \
+    "$(xz -dc "$DIST/git-clone.xz" | grep -ac SECRET-TOKEN) $(_has_dir logs) $(_has_dir hooks) $([ -e "$_unpack/fil-c-llvm/.git/index" ] && echo yes || echo no)"
+git -C "$_unpack/fil-c-llvm" checkout -q -f
+expect 'the unpacked repository checks its tree out' 'one' \
+    "$(git -C "$_unpack/fil-c-llvm" log -1 --format=%s)"
+expect 'it is published on the release' 'git-clone.xz|git-clone.xz' "$(_rel_asset git-clone.xz)"
+expect 'described for what it holds' \
+    '- `git-clone.xz`: The git repository of fil-c-llvm' \
+    "$(_rel_line git-clone.xz)"
+expect 'it is the last asset on the page' '- `git-clone.xz`: The git repository of fil-c-llvm|  - Usage: `tar -xJf git-clone.xz`, then `git -C fil-c-llvm checkout -f`' \
+    "$(_rel_get 'r["body"]' | grep '^- `\|^  - ' | tail -2 | paste -sd '|')"
+expect 'and the asset of another name still stays' 'other.xz|' "$(_rel_asset other.xz)"
+expect 'a package whose name says it all is described anew' \
+    '- `optfil-0.685-linux-x86_64.xz`: Linux x86_64, glibc, installed at `/opt/fil`' \
+    "$(_rel_line optfil-0.685-linux-x86_64.xz)"
 expect 'the token never appears on a curl command line' 0 \
     "$(grep -c SECRET-TOKEN "$_gh/argv.log")"
 expect 'no token header file is left behind' 0 \
     "$(grep -o -- '-H @[^ ]*' "$_gh/argv.log" | sed 's/-H @//' | sort -u | while read -r f; do [ -e "$f" ] && echo "$f"; done | wc -l | tr -d ' ')"
-git -C "$ROOT/compiler" remote set-url origin https://github.com/owner/fil-c-llvm.git
+git -C "$ROOT/3rd-party/fil-c-llvm" remote set-url origin https://github.com/owner/fil-c-llvm.git
 git -C "$ROOT" remote set-url origin https://github.com/owner/fil-c-light.git
 expect_returns 'without a token publishing is skipped, not failed' 0 \
     filc_upload_archive optfil-0.685-linux-x86_64.xz
@@ -989,6 +1157,7 @@ _light_run() {
         filc_optfil_package() { echo "pack@optfil"; [ "$PUBLISH" != 1 ] || echo "publish@optfil"; }
         filc_sync_all() { echo sync; }
         filc_upload_archive() { echo "publish@$1"; }
+        filc_publish_git() { echo publish-git; }
         filc_optfil_root() { echo root; [ -z "${_NOROOT:-}" ] || INSTALL=0; }
         filc_download_install() { [ -z "${_NOPREBUILT:-}" ] || return 1; echo "install@opt-fil"; }
         filc_download_toolchain() {
@@ -1003,7 +1172,7 @@ _light_run() {
         }
         ROOT=$_sb/lt-tree; BUILD_DIR=$_sb/lt-ws; DIST=$_sb/lt-dist; TOOLS=$_sb/lt-tools
         ( filc_main --no-install "$@" ); echo "exit@$?"
-    ) 2>/dev/null | grep -E '^(clang|root|runtime.*|sync|pack@.*|publish@.*|fetch@.*|install@.*|exit@[1-9].*)$' | tr '\n' ' ' | sed 's/ $//'
+    ) 2>/dev/null | grep -E '^(clang|root|runtime.*|sync|pack@.*|publish@.*|publish-git|fetch@.*|install@.*|exit@[1-9].*)$' | tr '\n' ' ' | sed 's/ $//'
 }
 _light_reset() {
     rm -rf "$_sb"/lt-*
@@ -1043,18 +1212,37 @@ _light_reset
 expect 'with no prebuilt toolchain it builds from source, still packing only to publish' \
     "clang runtime sync" "$(_NOPREBUILT=1 _light_run)"
 _light_reset
-expect '--no-build only fetches into the tree' 'fetch@lt-tree' "$(_light_run --no-build)"
-expect 'and skips a foreign arch' 'fetch@lt-tree' "$(_light_run --no-build --archs=all)"
+expect '--no-build only fetches, into a stage first' "fetch@prebuilt-$_host" "$(_light_run --no-build)"
+expect 'then into the tree, and leaves no stage' 'prebuilt prebuilt no' \
+    "$("$_sb/lt-tree/build/bin/clang-20") $(cat "$_sb/lt-tree/pizfix/lib/libpizlo.so") $([ -e "$_sb/lt-tools/prebuilt-$_host" ] && echo yes || echo no)"
+_light_reset
+expect 'a fetch that fails leaves the tree alone' 'exit@1 old' \
+    "$(_NOPREBUILT=1 _light_run --no-build) $(cat "$_sb/lt-tree/build/bin/clang-20")"
+expect 'and skips a foreign arch' "fetch@prebuilt-$_host" "$(_light_run --no-build --archs=all)"
 expect '--no-build fails with no prebuilt toolchain' exit@1 "$(_NOPREBUILT=1 _light_run --no-build)"
 expect '--no-build with --install gets root and installs it at /opt/fil instead' 'root install@opt-fil' \
     "$(_light_run --no-build --install)"
 expect 'and skips a foreign arch there too' 'root install@opt-fil' "$(_light_run --no-build --install --archs=all)"
-expect 'with no root at hand (--headless) it fetches into the tree' 'root fetch@lt-tree' \
+expect 'with no root at hand (--headless) it fetches into the tree' "root fetch@prebuilt-$_host" \
     "$(_NOROOT=1 _light_run --no-build --install --headless)"
 expect '--no-build --install fails with no prebuilt toolchain' 'root exit@1' \
     "$(_NOPREBUILT=1 _light_run --no-build --install)"
 expect '--no-build --musl fails: no prebuilt musl toolchain is published' 'exit@1' \
     "$(_light_run --no-build --install --musl)"
+_light_reset
+expect '--no-build --no-download does nothing' '' "$(_light_run --no-build --no-download)"
+expect '--only does nothing, not even ask for root' '' "$(_light_run --only --install)"
+expect '--only --publish-git only publishes the git repository' publish-git \
+    "$(_light_run --only --publish-git)"
+expect 'and the tree keeps its toolchain' old "$(cat "$_sb/lt-tree/build/bin/clang-20")"
+expect '--no-download with no prebuilt clang in the build folder builds as --nightly' \
+    'clang runtime sync' "$(_light_run --no-download)"
+_light_reset
+mkdir -p "$_sb/lt-ws/build/bin"
+printf '#!/bin/sh\necho kept\n' > "$_sb/lt-ws/build/bin/clang-20"
+chmod +x "$_sb/lt-ws/build/bin/clang-20"
+expect '--no-download builds with the prebuilt clang the build folder has' \
+    'runtime@no-cxx sync kept' "$(_light_run --no-download) $("$_sb/lt-ws/build/bin/clang-20")"
 
 
 test_section '--cosmo -- the optional cosmo submodule, its own build folder'
@@ -1070,7 +1258,7 @@ expect 'and run upstream'"'"'s cosmo scripts' 'yolo:bash ./build_yolocosmo.sh pa
           filc_build_runtime_libc no-cxx ) | grep -E '^(yolo|pas|libc):' | tr '\n' ' ' | sed 's/ $//')"
 # The tree's mirror leaves the submodule out, and a cosmo build lays it over the build
 # folder where upstream's scripts look.
-_cm=$_sb/cm; rm -rf "$_cm"; mkdir -p "$_cm/tree/3rd-party/libc-cosmo/projects/usercosmo" "$_cm/tree/compiler" "$_cm/tree/filc"
+_cm=$_sb/cm; rm -rf "$_cm"; mkdir -p "$_cm/tree/3rd-party/libc-cosmo/projects/usercosmo" "$_cm/tree/3rd-party/fil-c-llvm" "$_cm/tree/filc"
 : > "$_cm/tree/build_x.sh"; : > "$_cm/tree/3rd-party/libc-cosmo/build_usercosmo.sh"
 : > "$_cm/tree/3rd-party/libc-cosmo/projects/usercosmo/Makefile"
 ( ROOT=$_cm/tree; BUILD_DIR=$_cm/ws-glibc; LIBC=glibc; CROSS=""; filc_mirror )
@@ -1079,13 +1267,13 @@ expect 'a glibc build folder gets no cosmo sources' 'yes no' \
 ( ROOT=$_cm/tree; BUILD_DIR=$_cm/ws-cosmo; LIBC=cosmo; CROSS=""; filc_mirror )
 expect 'a cosmo one gets them at upstream'"'"'s paths' 'yes yes' \
     "$([ -f "$_cm/ws-cosmo/build_usercosmo.sh" ] && echo yes) $([ -f "$_cm/ws-cosmo/projects/usercosmo/Makefile" ] && echo yes)"
-# filc_cosmo_fetch: the compiler/ check, then the checkout at this tree's version tag.
+# filc_cosmo_fetch: the fil-c-llvm/ check, then the checkout at this tree's version tag.
 _cf_run() { ( ROOT=$_cm/tree; filc_light_version() { echo 1.0.0; }; filc_cosmo_fetch ) 2>&1; echo "exit@$?"; }
 _log=$(_cf_run)
-expect 'a compiler/ with no cosmo support stops --cosmo' 'yes exit@1' \
-    "$(grep -c 'needs a compiler/ of upstream Fil-C 0.686' <<< "$_log" | sed 's/^1$/yes/') ${_log##*$'\n'}"
-mkdir -p "$_cm/tree/compiler/clang/include/clang/Driver"
-echo 'def filc_fat_ape : Flag<["--"], "filc-fat-ape">;' > "$_cm/tree/compiler/clang/include/clang/Driver/Options.td"
+expect 'a fil-c-llvm/ with no cosmo support stops --cosmo' 'yes exit@1' \
+    "$(grep -c 'needs a 3rd-party/fil-c-llvm/ of upstream Fil-C 0.686' <<< "$_log" | sed 's/^1$/yes/') ${_log##*$'\n'}"
+mkdir -p "$_cm/tree/3rd-party/fil-c-llvm/clang/include/clang/Driver"
+echo 'def filc_fat_ape : Flag<["--"], "filc-fat-ape">;' > "$_cm/tree/3rd-party/fil-c-llvm/clang/include/clang/Driver/Options.td"
 _sub=$_cm/tree/3rd-party/libc-cosmo
 git -C "$_sub" init -q
 git -C "$_sub" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
@@ -1103,7 +1291,8 @@ eval "$_find_git"
 unset _find_git
 expect 'with git found again it works again' 'exit@0' "$(_cf_run | tail -1)"
 expect 'the cosmo package is named as package-build.sh names it' \
-    'Linux x86_64, cosmopolitan libc: static programs that run unchanged on several OSes (./setup.sh)' \
+    'Linux x86_64, cosmopolitan libc: static programs that run unchanged on several OSes
+Usage: `./setup.sh`' \
     "$(filc_asset_description cosmo-filc-0.686-linux-x86_64.xz)"
 
 test_section '--musl -- its own build folder, the glibc one'"'"'s clang, upstream'"'"'s package'
@@ -1150,7 +1339,8 @@ expect 'the package lands in dist/ under the upstream name, and is published' \
     "filc-0.685-linux-$_host.xz publish@filc-0.685-linux-$_host.xz no" \
     "$(ls "$DIST") $(printf '%s\n' "$_log" | grep '^publish@') $([ -d "$_m/filc-0.685-linux-$_host" ] && echo yes || echo no)"
 expect 'its release text says it is usable wherever it is unpacked' \
-    "Linux $_host, musl, usable wherever it is unpacked (./setup.sh)" \
+    "Linux $_host, musl, usable wherever it is unpacked
+Usage: \`./setup.sh\`" \
     "$( (filc_archived_clang() { :; }; filc_asset_description "filc-0.685-linux-$_host.xz") )"
 DIST=$_sb/dist-unused
 LIBC=glibc   # the default again, for the specs below
@@ -1288,7 +1478,9 @@ expect 'before the other /opt/fil portion ever built, it waits for the entire bu
     "built@yolo|(optfil-yolo waits for the entire build: optfil-libc has not built in $_opt yet)|built@libc|layout" \
     "$(_NOXZ=1 _CLEAN=yolo _SYNC=yolo _opt_run | grep -v '^sudo' | _opt_steps)"
 expect 'its release text says where it goes' \
-    "Linux $_host, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc" \
+    "Linux $_host, glibc, installed at \`/opt/fil\`
+Usage: \`sudo ./setup.sh --unattended\`
+Its clang runs on its own glibc" \
     "$(filc_asset_description "optfil-0.685-linux-$_host.xz")"
 expect 'the /opt/fil portions are never synced into the tree' '' \
     "$( ( ROOT=$_optroot; BUILD_DIR=$_opt; BUILT=' optfil-yolo optfil-libc'; SYNCED=''
@@ -1582,8 +1774,8 @@ _clang_run() {   # $@ = filc_parse_args flags
     )
 }
 if [ -x "$_sb/cxx" ]; then cp "$_sb/cxx" "$_sb/cxx-or-true"; else cp "$(command -v true)" "$_sb/cxx-or-true"; fi
-mkdir -p "$_sb/clang-tree/compiler/llvm" "$_sb/clang-ws/libpas" "$_sb/clang-ws/build/bin"
-: > "$_sb/clang-tree/compiler/llvm/CMakeLists.txt"
+mkdir -p "$_sb/clang-tree/3rd-party/fil-c-llvm/llvm" "$_sb/clang-ws/libpas" "$_sb/clang-ws/build/bin"
+: > "$_sb/clang-tree/3rd-party/fil-c-llvm/llvm/CMakeLists.txt"
 cp "$_root/libpas/common.sh" "$_sb/clang-ws/libpas/common.sh"   # it sets ARCH, to the host's
 cp "$_sb/cxx-or-true" "$_sb/clang-ws/build/bin/clang-20"
 printf 'LLVM_TARGETS_TO_BUILD:STRING=%s\n' "$(filc_llvm_target "$(filc_host_arch)")" \
@@ -1609,25 +1801,25 @@ expect 'bare --rebuild removes the earlier LLVM build too' '1 gone' \
     "$(grep -c 'clean: removed the clang build output' "$_sb/clang-run.log") $([ -e "$_sb/clang-ws/build/old.o" ] && echo kept || echo gone)"
 
 
-test_section 'filc_build_clang -- a changed compiler/ builds clang again'
+test_section 'filc_build_clang -- a changed fil-c-llvm/ builds clang again'
 
 # A build from its sources dates .filc-sources in the clang build folder; a later change
-# in compiler/'s llvm, clang or cmake builds clang again, a change elsewhere there does
+# in fil-c-llvm/'s llvm, clang or cmake builds clang again, a change elsewhere there does
 # not, and neither a re-link nor a run with nothing changed moves that date.
 _clang_said() { grep -c "$1" "$_sb/clang-run.log"; }
 _stamp_time() { stat -c %Y "$_sb/clang-ws/build/.filc-sources" 2>/dev/null; }
 if [ -x "$_sb/cxx" ]; then
     expect 'the build from scratch above dated .filc-sources' yes \
         "$([ -e "$_sb/clang-ws/build/.filc-sources" ] && echo yes)"
-    sleep 1; mkdir -p "$_sb/clang-tree/compiler/libcxx"
-    : > "$_sb/clang-tree/compiler/libcxx/x.cpp"
+    sleep 1; mkdir -p "$_sb/clang-tree/3rd-party/fil-c-llvm/libcxx"
+    : > "$_sb/clang-tree/3rd-party/fil-c-llvm/libcxx/x.cpp"
     _clang_run --nightly
     expect 'a change outside llvm, clang and cmake keeps clang' 1 "$(_clang_said 'clang already built')"
-    sleep 1; : > "$_sb/clang-tree/compiler/llvm/CMakeLists.txt"
+    sleep 1; : > "$_sb/clang-tree/3rd-party/fil-c-llvm/llvm/CMakeLists.txt"
     _before=$(_stamp_time)
     sleep 1; _clang_run --nightly
     expect 'a change in llvm builds clang again' 1 \
-        "$(_clang_said 'compiler/ changed since clang was built from it')"
+        "$(_clang_said '3rd-party/fil-c-llvm/ changed since clang was built from it')"
     expect 'and dates .filc-sources to that build' yes \
         "$([ "$(_stamp_time)" -gt "$_before" ] && echo yes)"
     _clang_run --nightly
@@ -1637,13 +1829,13 @@ if [ -x "$_sb/cxx" ]; then
     expect 'a re-link to the other linkage leaves .filc-sources as it was' \
         "1 $_before" "$(_clang_said 'other C++ runtime linkage') $(_stamp_time)"
     rm "$_sb/clang-ws/build/.filc-sources"
-    mkdir -p "$_sb/clang-tree/compiler/clang"
-    sleep 1; : > "$_sb/clang-tree/compiler/clang/x.cpp"
+    mkdir -p "$_sb/clang-tree/3rd-party/fil-c-llvm/clang"
+    sleep 1; : > "$_sb/clang-tree/3rd-party/fil-c-llvm/clang/x.cpp"
     _clang_run --nightly
     expect 'with no .filc-sources yet, a source newer than clang counts as changed' 1 \
-        "$(_clang_said 'compiler/ changed since clang was built from it')"
+        "$(_clang_said '3rd-party/fil-c-llvm/ changed since clang was built from it')"
 else
-    test_skip 'a changed compiler/ builds clang again' 'no host C++ compiler for a test clang'
+    test_skip 'a changed fil-c-llvm/ builds clang again' 'no host C++ compiler for a test clang'
 fi
 expect 'a clang that did not build here (no cmake cache) never counts as changed' 1 \
     "$(mkdir -p "$_sb/prebuilt/bin"; : > "$_sb/prebuilt/bin/clang-20"
@@ -1913,8 +2105,8 @@ expect 'a foreign arch is compiled by its own Fil-C clang (the helper)' \
 expect 'cross-compiling for the arch, under its triple' "Linux $_other $_t $_t" \
     "$(for _k in CMAKE_SYSTEM_NAME CMAKE_SYSTEM_PROCESSOR CMAKE_C_COMPILER_TARGET LLVM_DEFAULT_TARGET_TRIPLE; do
          sed -n "s/^-D$_k=//p" "$_sb/cxx-cmake.args"; done | tr '\n' ' ' | sed 's/ $//')"
-expect "from compiler/runtimes, libc++ and libc++abi with upstream's options" \
-    "$BUILD_DIR/compiler/runtimes|libcxx;libcxxabi|ON|ON|OFF" \
+expect "from fil-c-llvm/runtimes, libc++ and libc++abi with upstream's options" \
+    "$BUILD_DIR/3rd-party/fil-c-llvm/runtimes|libcxx;libcxxabi|ON|ON|OFF" \
     "$(sed -n 2p "$_sb/cxx-cmake.args")|$(sed -n 's/^-DLLVM_ENABLE_RUNTIMES=//p' "$_sb/cxx-cmake.args")|$(sed -n 's/^-DLIBCXX_ENABLE_EXCEPTIONS=//p' "$_sb/cxx-cmake.args")|$(sed -n 's/^-DLIBCXXABI_HAS_PTHREAD_API=//p' "$_sb/cxx-cmake.args")|$(sed -n 's/^-DLIBCXXABI_USE_LLVM_UNWINDER=//p' "$_sb/cxx-cmake.args")"
 expect 'the compiler checks are skipped: clang++ links the libc++ not built yet' 'ON ON' \
     "$(sed -n 's/^-DCMAKE_C_COMPILER_WORKS=//p; s/^-DCMAKE_CXX_COMPILER_WORKS=//p' "$_sb/cxx-cmake.args" | tr '\n' ' ' | sed 's/ $//')"

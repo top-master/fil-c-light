@@ -63,7 +63,7 @@ A from-source build runs in a build folder beside this tree (`../build/fil-c-lig
 and updates this tree's `build/` and `pizfix/` only once the whole build succeeds.
 Its package (`dist/optfil-<version>-linux-<arch>.xz` for glibc, `filc-<version>-linux-<arch>.xz`
 for musl, see their [naming](https://github.com/top-master/fil-c-llvm#release-naming)) is then
-published on the `compiler/`
+published on the `fil-c-llvm`
 repository's releases with `--publish`, when a `git remote` of it carries an access
 token (by default it stays local). By default it builds for this machine's CPU arch
 only; `--archs` adds another one Fil-C supports, cross-compiled in its own build

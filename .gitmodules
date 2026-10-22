@@ -1,5 +1,5 @@
 [submodule "compiler"]
-	path = compiler
+	path = 3rd-party/fil-c-llvm
 	url = https://github.com/top-master/fil-c-llvm.git
 [submodule "3rd-party/libc-cosmo"]
 	path = 3rd-party/libc-cosmo

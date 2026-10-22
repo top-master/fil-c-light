@@ -8,7 +8,7 @@
 # (or when no prebuilt one is available).
 #
 #   ./build.sh                 Build this tree: fetch + unpack the prebuilt toolchain for
-#                              this platform (build/ = the Fil-C clang of the compiler/
+#                              this platform (build/ = the Fil-C clang of the fil-c-llvm
 #                              repo, pizfix/ = runtime + libc + libc++), then build the
 #                              runtime and the glibc slice with its clang, and sync them
 #                              into the tree once they all built. A build folder whose
@@ -16,11 +16,12 @@
 #                              instead of fetching one. Builds as --nightly if no
 #                              matching archive can be downloaded.
 #
-#   ./build.sh --nightly       Build EVERYTHING FROM SOURCE: init the compiler/ submodule
-#   ./build.sh --latest        (llvm+clang) if needed, compile clang, then the memory-safe
-#                              runtime and the glibc slice. On success the result is packed
-#                              as upstream packs it, for reuse/redistribution: glibc as the
-#                              /opt/fil package dist/optfil-<version>-linux-<arch>.xz,
+#   ./build.sh --nightly       Build EVERYTHING FROM SOURCE: init the 3rd-party/fil-c-llvm
+#   ./build.sh --latest        submodule (llvm+clang) if needed, compile clang, then the
+#                              memory-safe runtime and the glibc slice. On success the
+#                              result is packed as upstream packs it, for
+#                              reuse/redistribution: glibc as the /opt/fil package
+#                              dist/optfil-<version>-linux-<arch>.xz,
 #                              musl as dist/filc-<version>-linux-<arch>.xz, cosmo as
 #                              dist/cosmo-filc-<version>-linux-<arch>.xz.
 #
@@ -49,8 +50,10 @@
 #                              names stay upstream's.
 #   ./build.sh --no-universal  The distribution's toolchain (the default): a clang linked
 #   ./build.sh --no-static     with the host's libstdc++/libgcc, for this distribution
-#   ./build.sh --non-universal only; this turns --universal back off.
-#   ./build.sh --non-static
+#   ./build.sh --non-universal only; this turns --universal back off. A run that installs
+#   ./build.sh --non-static    or packs the /opt/fil toolchain still links its clang as
+#                              --universal does, as that clang runs on the toolchain's own
+#                              glibc, whose loader finds no host libstdc++.
 #
 #   ./build.sh --sync[=<re>]   Also update each portion of the tree's toolchain right after
 #                              that portion builds, when its keyword matches the extended
@@ -114,7 +117,7 @@
 #   ./build.sh --upload        build always packs one; the default build packs one only
 #                              to publish it) on the release v<upstream version> (from this
 #                              tree's upstream-<version> tag) of the
-#                              compiler/ submodule's GitHub repo (where the default build
+#                              fil-c-llvm submodule's GitHub repo (where the default build
 #                              downloads it from), when a git remote of that repo carries
 #                              an access token in its URL: the archive becomes an asset
 #                              listed by its file name, and the release's name and text
@@ -130,6 +133,8 @@
 #   ./build.sh --no-rebuild    without building, and regenerate the release's name and
 #                              text (only that, when dist/ holds no archive). With
 #                              --clean: only clean. Otherwise: see above (fetch only).
+#
+#   ./build.sh --only          Disables all default operations.
 #
 #                              Flags take effect in order, so a later one overrides an
 #                              earlier one: --no-publish --publish publishes, --sync
@@ -152,8 +157,8 @@
 #                              --cosmo, at this tree's own version tag. Like --musl it builds
 #                              in <build folder>-cosmo with the glibc folder's clang, and packs
 #                              cosmo-filc-<version>-linux-<arch>.xz with package-build.sh;
-#                              it needs a compiler/ of upstream 0.686 or later (whose clang
-#                              and libc++ know cosmo) and an x86_64 host.
+#                              it needs a 3rd-party/fil-c-llvm/ of upstream 0.686 or later
+#                              (whose clang and libc++ know cosmo) and an x86_64 host.
 #
 #   ./build.sh --install       With --glibc: once the build is done, install the toolchain at
 #   ./build.sh --setup         /opt/fil in the layout of upstream's optfil/build_opt.sh
@@ -186,6 +191,7 @@
 #                              them itself.
 #
 #   ./build.sh -h | --help
+#   ./build.sh --help --internal   Also list the internal helpers.
 #
 # Env overrides:
 #   BUILD_DIR                The build folder (as -d), default ../build/<tree name>.
@@ -210,6 +216,7 @@ DIST="$ROOT/dist"
 HOST_CLANG="${HOST_CLANG:-clang}"
 CLANGVER=20                       # LLVM major of the Fil-C fork (produces bin/clang-20)
 FILC_COSMO_DIR=3rd-party/libc-cosmo  # the optional cosmo submodule (see filc_cosmo_fetch)
+FILC_COMPILER_DIR=3rd-party/fil-c-llvm  # the LLVM + Clang sources submodule
 
 # ---------- platform identity ----------
 # Sets ARCH, the CPU arch the build is for: <arch>, else the host's.
@@ -306,7 +313,7 @@ filc_clang_dir() {
   if [ -n "${CROSS:-}" ]; then echo "$BUILD_DIR/clang-build"; else echo "$BUILD_DIR/build"; fi
 }
 
-# The prebuilt toolchain (clang + pizfix) is published on the compiler/ submodule's repo's
+# The prebuilt toolchain (clang + pizfix) is published on the fil-c-llvm submodule's repo's
 # releases, not on this light repo -- so derive that repo from the submodule URL
 # (.gitmodules is the single source of truth for it; never hardcode/duplicate the URL here).
 # Prints its GitHub "<owner>/<repo>", or nothing when it is not on GitHub.
@@ -341,11 +348,11 @@ filc_release_base_urls() {
 # Prints the GitHub access token of the first git remote whose URL carries one
 # (https://<token>@github.com/... or https://<user>:<token>@github.com/...), preferring a
 # remote of the <owner>/<repo> given, then any remote of the same owner; it looks at the
-# compiler/ submodule's remotes, then this tree's own. Prints nothing when none has one.
+# fil-c-llvm submodule's remotes, then this tree's own. Prints nothing when none has one.
 filc_github_token() {   # $1 = <owner>/<repo>
   local want dir name url auth path
   for want in "$1" "${1%%/*}/"; do
-    for dir in "$ROOT/compiler" "$ROOT"; do
+    for dir in "$ROOT/$FILC_COMPILER_DIR" "$ROOT"; do
       [ -e "$dir/.git" ] || continue
       for name in $(git -C "$dir" remote 2>/dev/null); do
         url="$(git -C "$dir" remote get-url --push "$name" 2>/dev/null || true)"
@@ -365,10 +372,11 @@ filc_github_token() {   # $1 = <owner>/<repo>
 
 # ---------- the prebuilt toolchain ----------
 # Fetches the prebuilt toolchain of the current arch (the optfil package of the upstream
-# version, see filc_fetch_optfil) and lays it out in <dir> (default: the tree) as build/ +
-# pizfix/. Each step fails explicitly: callers run it in a || list, where set -e is off.
+# version, see filc_fetch_optfil) and lays it out in <dir> (default: the tree) as build/
+# + pizfix/, then checks that its clang runs here (a foreign arch's never does). Each step
+# fails explicitly: callers run it in a || list, where set -e is off.
 filc_download_toolchain() {   # [$1 = dir]
-  local dest="${1:-$ROOT}" unpack="$TOOLS/unpack-$ARCH"
+  local dest="${1:-$ROOT}" unpack="$TOOLS/unpack-$ARCH" version
   filc_fetch_optfil "$unpack" || return 1
   echo "Unpacking it into $dest ..."
   mkdir -p "$dest"
@@ -383,9 +391,29 @@ filc_download_toolchain() {   # [$1 = dir]
   filc_relocate_runpaths "$dest/pizfix"
   filc_set_interpreters "$dest/pizfix"
   filc_set_clang_interpreter "$dest"
-  if [ -z "${CROSS:-}" ]; then   # a foreign arch's clang does not run here
-    echo "Prebuilt toolchain ready: $("$dest/build/bin/clang" --version | head -1)"
+  if [ -n "${CROSS:-}" ]; then
+    return 0
   fi
+  if ! version="$("$dest/build/bin/clang" --version 2>&1)"; then
+    printf '%s\n' "$version" >&2
+    echo "ERROR: the clang of the prebuilt toolchain does not run here." >&2
+    return 1
+  fi
+  echo "Prebuilt toolchain ready: ${version%%$'\n'*}"
+}
+
+# Puts the prebuilt toolchain that <stage> holds (see filc_download_toolchain) into the
+# tree, replacing its build/bin, build/lib/clang, build/include and pizfix/, and points
+# their programs at the tree's own loader.
+filc_prebuilt_to_tree() {   # $1 = stage dir
+  echo "Unpacking the prebuilt toolchain into the tree ..."
+  rm -rf "$ROOT/build/bin" "$ROOT/build/lib/clang" "$ROOT/build/include"
+  mkdir -p "$ROOT/build"
+  cp -a "$1/build/." "$ROOT/build/"
+  rm -rf "$ROOT/pizfix"
+  cp -a "$1/pizfix" "$ROOT/pizfix"
+  filc_set_interpreters "$ROOT/pizfix"
+  filc_set_clang_interpreter "$ROOT"
 }
 
 # Fetches the prebuilt toolchain of the current arch, the optfil package of the upstream
@@ -505,12 +533,12 @@ filc_upstream_version() {
 # --cosmo: makes sure the optional cosmo submodule (FILC_COSMO_DIR, the fil-c-cosmo repo,
 # which only --cosmo ever fetches) is checked out at this tree's own version tag (see
 # filc_light_version), which that repo carries too, else at the commit this tree pins;
-# and that compiler/ can build cosmo programs at all (upstream added cosmo to its clang
-# driver and libc++ in 0.686). Exits on failure.
+# and that 3rd-party/fil-c-llvm/ can build cosmo programs at all (upstream added cosmo to
+# its clang driver and libc++ in 0.686). Exits on failure.
 filc_cosmo_fetch() {
   local git sub="$ROOT/$FILC_COSMO_DIR" tag
-  if ! grep -q 'filc_fat_ape\|filc-fat-ape' "$ROOT/compiler/clang/include/clang/Driver/Options.td" 2>/dev/null; then
-    echo "ERROR: --cosmo needs a compiler/ of upstream Fil-C 0.686 or later (cosmo support in" \
+  if ! grep -q 'filc_fat_ape\|filc-fat-ape' "$ROOT/$FILC_COMPILER_DIR/clang/include/clang/Driver/Options.td" 2>/dev/null; then
+    echo "ERROR: --cosmo needs a $FILC_COMPILER_DIR/ of upstream Fil-C 0.686 or later (cosmo support in" \
          "its clang driver and libc++); this one has none." >&2
     exit 1
   fi
@@ -575,32 +603,35 @@ filc_set_clang_interpreter() {   # $1 = dir
 }
 
 # Builds this tree's own portions of the current arch (see filc_use_arch), the runtime
-# and libc layers, with the clang of the compiler/ repo: the whole prebuilt toolchain is
+# and libc layers, with the clang of the fil-c-llvm repo: the whole prebuilt toolchain is
 # laid down first, in the build folder and (unless --no-sync) the tree, so the tree has a
 # whole toolchain even if the build fails, and what is not rebuilt here, libc++ (its
-# sources are the compiler/ repo's), is the prebuilt one's. A build folder that built its
+# sources are the fil-c-llvm repo's), is the prebuilt one's. A build folder that built its
 # clang from source (by --nightly) keeps it, as a prebuilt one would overwrite that LLVM
 # build's output; that clang is then synced too, as the runtime must come from the same
 # clang as the tree's, and libc++ is built with it. Then syncs, and packs and publishes
 # only with --publish. Returns 1 when no prebuilt toolchain can be fetched.
 filc_light_arch() {   # $1 = marker file of the run's start
-  local started="$1" cdir stage="" tag
+  local started="$1" cdir stage="" prebuilt="" tag
   BUILT=""
   PREBUILT=""
   SYNCED=""
   cdir="$(filc_clang_dir)"
-  if [ "$LIBC" = glibc ] && [ ! -f "$cdir/CMakeCache.txt" ]; then
+  if [ "$LIBC" = glibc ] && [ ! -f "$cdir/CMakeCache.txt" ] && [ "$DOWNLOAD" = 0 ]; then
+    # Without fetching: the clang a fetch laid out here before, else none.
+    if [ ! -x "$cdir/bin/clang-$CLANGVER" ]; then
+      echo "(--no-download: $cdir has no prebuilt clang to build with)"
+      return 1
+    fi
+    echo "(--no-download: building with the prebuilt clang $cdir already has)"
+    prebuilt=1
+  elif [ "$LIBC" = glibc ] && [ ! -f "$cdir/CMakeCache.txt" ]; then
     stage="$TOOLS/prebuilt-$ARCH"
     rm -rf "$stage"
     filc_download_toolchain "$stage" || { rm -rf "$stage"; return 1; }
+    prebuilt=1
     if [ -z "$CROSS" ] && [ "$SYNC" = 1 ]; then
-      echo "Unpacking the prebuilt toolchain into the tree ..."
-      rm -rf "$ROOT/build/bin" "$ROOT/build/lib/clang" "$ROOT/build/include"
-      mkdir -p "$ROOT/build"
-      cp -a "$stage/build/." "$ROOT/build/"
-      rm -rf "$ROOT/pizfix"
-      cp -a "$stage/pizfix" "$ROOT/pizfix"
-      filc_set_interpreters "$ROOT/pizfix"
+      filc_prebuilt_to_tree "$stage"
     fi
     # The runtime builds on the prebuilt one, which also brings what is not rebuilt.
     mkdir -p "$BUILD_DIR/pizfix"
@@ -612,22 +643,25 @@ filc_light_arch() {   # $1 = marker file of the run's start
     filc_install_cross "$ARCH"
     filc_cross_helper
   fi
-  if [ -z "$stage" ]; then
+  if [ -z "$prebuilt" ]; then
     if [ "$LIBC" = glibc ]; then
       echo "This build folder built its clang from source; building with it: $cdir"
     else
       echo "--$LIBC builds with the clang of the glibc build folder (see filc_borrow_clang)."
     fi
-    filc_build_clang "${STATIC:-any}"
+    filc_build_clang "$(filc_clang_linkage any)"
     BUILT="$BUILT clang"
   else
+    # These portions come from the prebuilt toolchain, not a build (see
+    # filc_optfil_install).
+    PREBUILT="clang cxx crypt"
+  fi
+  if [ -n "$stage" ]; then
     rm -rf "$cdir/bin" "$cdir/lib/clang"
     mkdir -p "$cdir/lib"
     cp -a "$stage/build/bin" "$cdir/bin"
     cp -a "$stage/build/lib/clang" "$cdir/lib/clang"
-    # These portions come from the prebuilt toolchain, not a build (see
-    # filc_optfil_install).
-    PREBUILT="clang cxx crypt"
+    [ -n "$CROSS" ] || filc_set_clang_interpreter "$BUILD_DIR"
     # libc++'s headers, beside the clang that compiles.
     rm -rf "$BUILD_DIR/build/include"
     if [ -d "$stage/build/include" ]; then
@@ -636,7 +670,7 @@ filc_light_arch() {   # $1 = marker file of the run's start
     fi
     rm -rf "$stage"
   fi
-  if [ -n "$stage" ]; then
+  if [ -n "$prebuilt" ]; then
     filc_build_runtime_libc no-cxx
     filc_cxx_built || echo "WARNING: the prebuilt $ARCH toolchain lacks libc++ (or its headers); --nightly builds it." >&2
   else
@@ -648,8 +682,8 @@ filc_light_arch() {   # $1 = marker file of the run's start
 
 # ---------- the build folder: a mirror of the tree ----------
 # Mirrors the tree's sources into the build folder, where upstream's scripts build
-# unchanged: the read-only compiler/ sources and filc/ are linked, everything upstream
-# writes into is copied (no --delete, so earlier build output there stays incremental).
+# unchanged: the read-only 3rd-party/fil-c-llvm/ sources and filc/ are linked, everything
+# upstream writes into is copied (no --delete, so earlier build output there stays incremental).
 # A file the tree no longer has is removed from there too, found from the list of files
 # the previous mirror copied (a build would otherwise still pick up, say, a deleted .S
 # over the .c that replaces it); build output is never in that list.
@@ -660,8 +694,8 @@ filc_mirror() {
   local list="$BUILD_DIR/.filc-mirror.list" f
   mkdir -p "$BUILD_DIR"
   ( cd "$ROOT" && find . \( -path ./.git -o -path ./build -o -path ./pizfix -o -path ./dist \
-        -o -path ./.filc-light-tools -o -path ./tmp-build -o -path ./compiler -o -path ./filc \
-        -o -path ./3rd-party/crypt \
+        -o -path ./.filc-light-tools -o -path ./tmp-build -o -path ./filc \
+        -o -path "./$FILC_COMPILER_DIR" -o -path ./3rd-party/crypt \
         -o -path "./$FILC_COSMO_DIR" \) \
         -prune -o \( -type f -o -type l \) -print ) | sed 's#^\./##' | LC_ALL=C sort > "$list.new"
   if [ -f "$list" ]; then
@@ -672,8 +706,8 @@ filc_mirror() {
   mv -f "$list.new" "$list"
   rsync -a \
     --exclude=/.git --exclude=/build/ --exclude=/pizfix/ --exclude=/dist/ \
-    --exclude=/.filc-light-tools/ --exclude=/tmp-build/ --exclude=/compiler --exclude=/filc \
-    --exclude=/3rd-party/crypt/ \
+    --exclude=/.filc-light-tools/ --exclude=/tmp-build/ --exclude=/filc \
+    --exclude="/$FILC_COMPILER_DIR" --exclude=/3rd-party/crypt/ \
     --exclude="/$FILC_COSMO_DIR/" \
     "$ROOT/" "$BUILD_DIR/"
   # The cosmo sources sit where upstream's scripts expect them (projects/usercosmo, ...).
@@ -681,9 +715,15 @@ filc_mirror() {
     rsync -a --exclude=/.git "$ROOT/$FILC_COSMO_DIR/" "$BUILD_DIR/"
   fi
   local d
-  for d in compiler filc; do
-    [ -L "$BUILD_DIR/$d" ] || { rm -rf "${BUILD_DIR:?}/$d"; ln -s "$ROOT/$d" "$BUILD_DIR/$d"; }
+  for d in "$FILC_COMPILER_DIR" filc; do
+    if [ ! -L "$BUILD_DIR/$d" ]; then
+      rm -rf "${BUILD_DIR:?}/$d"
+      mkdir -p "$(dirname "$BUILD_DIR/$d")"
+      ln -s "$ROOT/$d" "$BUILD_DIR/$d"
+    fi
   done
+  # Drops the dangling `compiler` link that an older build folder keeps.
+  [ ! -L "$BUILD_DIR/compiler" ] || [ -e "$BUILD_DIR/compiler" ] || rm -f "$BUILD_DIR/compiler"
   if [ -z "${CROSS:-}" ] && [ ! -d "$BUILD_DIR/pizfix" ] && [ -d "$ROOT/pizfix" ]; then
     cp -a "$ROOT/pizfix" "$BUILD_DIR/pizfix"
   fi
@@ -819,7 +859,7 @@ filc_portion_sources() {   # $1 = portion keyword
         cosmo) echo "$FILC_COSMO_DIR/projects/usercosmo filc/include $FILC_COSMO_DIR/build_usercosmo.sh" ;;
         *)     echo "projects/user-glibc-2.44 projects/binary-root.c filc/include build_user_glibc.sh" ;;
       esac ;;
-    cxx)    echo "compiler/runtimes compiler/libcxx compiler/libcxxabi compiler/cmake" ;;
+    cxx)    echo "$FILC_COMPILER_DIR/runtimes $FILC_COMPILER_DIR/libcxx $FILC_COMPILER_DIR/libcxxabi $FILC_COMPILER_DIR/cmake" ;;
     crypt)  echo "3rd-party/crypt" ;;
     optfil-yolo) echo "projects/yolo-glibc-2.44 projects/binary-root.c optfil/kernel-include-$ARCH" ;;
     optfil-libc) echo "projects/user-glibc-2.44 projects/binary-root.c filc/include" ;;
@@ -974,6 +1014,25 @@ filc_clang_is_universal() {   # [$1 = clang binary]
     | grep -qE 'NEEDED.*(libstdc\+\+|libgcc_s)'
 }
 
+# Tells whether this run lays out the /opt/fil toolchain of the current arch, to install
+# it (see filc_optfil_install) or to pack it (see filc_optfil_package).
+filc_optfil_wanted() {
+  [ "${LIBC:-glibc}" = glibc ] || return 1
+  { [ -z "${CROSS:-}" ] && [ "$INSTALL" = 1 ]; } || [ "$MODE" = source ] || [ "$PUBLISH" = 1 ]
+}
+
+# Prints the C++ runtime linkage the clang builds with (see filc_build_clang): static
+# for --universal, and for a run that lays out the /opt/fil toolchain, as fix_clang.sh
+# puts that clang on the toolchain's own glibc, whose loader finds no host libstdc++;
+# else <default>.
+filc_clang_linkage() {   # $1 = default linkage
+  if [ "$STATIC" = static ] || filc_optfil_wanted; then
+    echo static
+  else
+    echo "$1"
+  fi
+}
+
 # Prints the newest GLIBC symbol version <clang> (default: the build folder's) needs,
 # i.e. the oldest glibc it runs on, or nothing when readelf cannot tell. readelf reads
 # a binary of any arch.
@@ -1012,7 +1071,7 @@ filc_build_clang() {   # $1 = static, dynamic (or empty) or any
       echo "clang lacks an LLVM target of $targets; reconfiguring it ..."
     elif [ -n "$fresh" ]; then
       # Only what changed compiles.
-      echo "compiler/ changed since clang was built from it; building clang again ..."
+      echo "$FILC_COMPILER_DIR/ changed since clang was built from it; building clang again ..."
     elif { [ "$link" = static ] && filc_clang_is_universal "$clang"; } \
         || { [ "$link" != static ] && ! filc_clang_is_universal "$clang"; }; then
       if [ -n "${CROSS:-}" ]; then
@@ -1032,24 +1091,24 @@ filc_build_clang() {   # $1 = static, dynamic (or empty) or any
       echo "No clang build in $dir yet; compiling LLVM+Clang from scratch (hours)."
     fi
   fi
-  # The llvm+clang+cmake sources live in the compiler/ submodule; init it if needed.
-  if [ ! -e "$ROOT/compiler/llvm/CMakeLists.txt" ]; then
-    echo "Initialising the compiler/ submodule (llvm+clang+cmake) ..."
-    git -C "$ROOT" -c protocol.file.allow=always submodule update --init compiler
+  # The llvm+clang+cmake sources live in the fil-c-llvm submodule; init it if needed.
+  if [ ! -e "$ROOT/$FILC_COMPILER_DIR/llvm/CMakeLists.txt" ]; then
+    echo "Initialising the $FILC_COMPILER_DIR/ submodule (llvm+clang+cmake) ..."
+    git -C "$ROOT" -c protocol.file.allow=always submodule update --init "$FILC_COMPILER_DIR"
   fi
   # LLVM's build wants llvm/, clang/ and the repo-root cmake/ as siblings at the tree root.
   local d
   for d in llvm clang cmake; do
-    [ -e "$BUILD_DIR/$d" ] || ln -s "compiler/$d" "$BUILD_DIR/$d"
+    [ -e "$BUILD_DIR/$d" ] || ln -sfn "$FILC_COMPILER_DIR/$d" "$BUILD_DIR/$d"
   done
   local ncpu
   ncpu="$(filc_ncpu)"
   # The repository and revision clang --version names, without the access token a remote
   # URL may carry (LLVM refuses to embed one).
   local vcrepo vcrev
-  vcrepo="$(git -C "$ROOT/compiler" remote get-url origin 2>/dev/null \
+  vcrepo="$(git -C "$ROOT/$FILC_COMPILER_DIR" remote get-url origin 2>/dev/null \
             | sed -E 's#^(https?://)[^@/]*@#\1#' || true)"
-  vcrev="$(git -C "$ROOT/compiler" rev-parse HEAD 2>/dev/null || true)"
+  vcrev="$(git -C "$ROOT/$FILC_COMPILER_DIR" rev-parse HEAD 2>/dev/null || true)"
   # Both ways are spelled out, as cmake keeps a cached value from the previous run.
   local extra="-DLLVM_STATIC_LINK_CXX_STDLIB=OFF -DCMAKE_EXE_LINKER_FLAGS="
   if [ "$link" = static ]; then
@@ -1105,7 +1164,7 @@ filc_build_clang() {   # $1 = static, dynamic (or empty) or any
   filc_sync_portion clang
 }
 
-# Tells whether clang's sources (compiler/'s llvm, clang and cmake) changed since the
+# Tells whether clang's sources (fil-c-llvm's llvm, clang and cmake) changed since the
 # clang build folder <dir> last built it from them: since .filc-sources there, or in a
 # folder that has none yet, since its clang binary. A folder without a cmake cache (a
 # prebuilt clang) never counts as changed.
@@ -1115,7 +1174,7 @@ filc_clang_sources_changed() {   # $1 = clang build folder
   [ -e "$since" ] || since="$1/bin/clang-$CLANGVER"
   [ -e "$since" ] || return 1
   for d in llvm clang cmake; do
-    if [ -n "$(find "$ROOT/compiler/$d" -newer "$since" -print -quit 2>/dev/null)" ]; then
+    if [ -n "$(find "$ROOT/$FILC_COMPILER_DIR/$d" -newer "$since" -print -quit 2>/dev/null)" ]; then
       return 0
     fi
   done
@@ -1465,7 +1524,7 @@ filc_build_cxx() {
   # The compiler checks link a test program, and the Fil-C clang++ links libc++ into
   # every program: before the first libc++ exists they fail, so they are skipped, as in
   # a runtimes bootstrap (libc++'s own checks link with -nostdlib++).
-  cmake -S "$BUILD_DIR/compiler/runtimes" -B "$dir" -G Ninja \
+  cmake -S "$BUILD_DIR/$FILC_COMPILER_DIR/runtimes" -B "$dir" -G Ninja \
     -DCMAKE_C_COMPILER_WORKS=ON -DCMAKE_CXX_COMPILER_WORKS=ON \
     -DLLVM_ENABLE_RUNTIMES="libcxx;libcxxabi" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -1510,7 +1569,7 @@ filc_runtime_env() {
 
 # Builds the runtime and libc layers into pizfix/ (build_base.sh minus its two clang
 # steps), then libc++ and for glibc libxcrypt unless no-cxx is asked: the default build
-# keeps the prebuilt toolchain's, as their sources are submodules' (compiler/,
+# keeps the prebuilt toolchain's, as their sources are submodules' (3rd-party/fil-c-llvm,
 # 3rd-party/crypt), not this tree's.
 filc_build_runtime_libc() {   # [$1 = no-cxx]
   filc_runtime_env
@@ -1585,24 +1644,35 @@ filc_archived_clang() {
   if [ -f "$clang" ]; then echo "$clang"; elif [ -z "${CROSS:-}" ]; then filc_built_clang; fi
 }
 
-# Prints the description of the package <name>, for the release text: which hosts it is
-# for (its name ends in their arch), its libc, and, for a musl one, the oldest host glibc
-# its clang runs on (see filc_archived_clang).
-filc_asset_description() {   # $1 = package name
+# Prints the description of the asset <name>, for the release text: for a package, which
+# hosts it is for (its name ends in their arch), its libc, and, for a musl one, the oldest
+# host glibc its clang runs on (see filc_archived_clang). The first line is the asset's
+# own line on the page, and each further line a note under it, such as its usage.
+filc_asset_description() {   # $1 = asset name
   local arch="${1%.xz}" clang floor=""
   arch="${arch##*-}"
   case "$1" in
     optfil-*.xz)
-      printf 'Linux %s, glibc, installed at /opt/fil (sudo ./setup.sh --unattended); its clang runs on its own glibc\n' "$arch"
+      printf 'Linux %s, glibc, installed at `/opt/fil`\n' "$arch"
+      printf 'Usage: `sudo ./setup.sh --unattended`\n'
+      printf 'Its clang runs on its own glibc\n'
       return 0 ;;
     cosmo-filc-*-linux-*.xz)
-      printf 'Linux %s, cosmopolitan libc: static programs that run unchanged on several OSes (./setup.sh)\n' "$arch"
+      printf 'Linux %s, cosmopolitan libc: static programs that run unchanged on several OSes\n' "$arch"
+      printf 'Usage: `./setup.sh`\n'
       return 0 ;;
     filc-*-linux-*.xz)
       clang="$(filc_archived_clang)"
       [ -z "$clang" ] || floor="$(filc_clang_glibc_floor "$clang")"
-      printf 'Linux %s, musl, usable wherever it is unpacked (./setup.sh)%s\n' "$arch" \
-        "${floor:+; its clang runs on a host glibc >= $floor}"
+      printf 'Linux %s, musl, usable wherever it is unpacked\n' "$arch"
+      printf 'Usage: `./setup.sh`\n'
+      [ -z "$floor" ] || printf 'Its clang runs on a host glibc %s or newer\n' "$floor"
+      return 0 ;;
+    git-clone.xz)
+      local repo
+      repo="$(basename "$FILC_COMPILER_DIR")"
+      printf 'The git repository of %s\n' "$repo"
+      printf 'Usage: `tar -xJf git-clone.xz`, then `git -C %s checkout -f`\n' "$repo"
       return 0 ;;
     *) printf 'Linux %s\n' "$arch" ;;
   esac
@@ -1611,15 +1681,21 @@ filc_asset_description() {   # $1 = package name
 # Regenerates the release's name (both versions) and text from all
 # of its assets, and updates the release when they differ, so the page always says what
 # the scripts know. An asset is described by the description given for it (the one just
-# published), else by its line in the current text, else by an old label that is not
-# its name, else by its name.
+# published), else by its lines in the current text, else by an old label that is not
+# its name, else by its name. A description's first line is the asset's bullet, and each
+# further line a sub-bullet under it. The packages come in name order, and git-clone.xz
+# comes last.
 FILC_PAGE_PY='
 import json, os, re, sys
 rel = json.load(sys.stdin)
 ver = sys.argv[1]
 light = os.environ.get("FILC_LIGHT_VERSION", "")
 given = dict(zip(sys.argv[2::2], sys.argv[3::2]))
-listed = dict(re.findall(r"^- `([^`]+)`: (.*)$", rel.get("body") or "", re.M))
+listed = {
+    name: "\n".join([first] + re.findall(r"^  - (.*)$", notes, re.M))
+    for name, first, notes in re.findall(
+        r"^- `([^`]+)`: (.*)((?:\n  - .*)*)", rel.get("body") or "", re.M)
+}
 def describe(asset):
     if asset["name"] in given:
         return given[asset["name"]]
@@ -1631,7 +1707,10 @@ def describe(asset):
     words = tag.replace("-", " ")
     return words[:1].upper() + words[1:]
 assets = sorted((a for a in rel.get("assets", []) if a["name"].endswith(".xz")),
-                key=lambda a: a["name"])
+                key=lambda a: (a["name"] == "git-clone.xz", a["name"]))
+def item(asset):
+    lines = describe(asset).split("\n")
+    return "- `%s`: %s" % (asset["name"], lines[0]) + "".join("\n  - " + l for l in lines[1:])
 # The naming, the same as the "Release Naming" section of the compiler repo'"'"'s README.md:
 # in full on the latest release, a link to that section on an older one.
 naming = "\n".join([
@@ -1646,16 +1725,16 @@ if os.environ.get("FILC_RELEASE_LATEST") != "1":
     naming = "See [Release Naming](%s) for what the package names mean." % os.environ.get("FILC_NAMING_URL", "")
 body = "\n\n".join([
     "Prebuilt Fil-C-Light %s toolchain packages, based on upstream Fil-C %s." % (light, ver),
-    "Assets:\n" + "\n".join("- `%s`: %s" % (a["name"], describe(a)) for a in assets),
+    "Assets:\n" + "\n".join(item(a) for a in assets),
     naming,
 ])
-name = "Fil-C-Light %s (upstream %s)" % (light, ver)
+name = "FCL %s (upstream %s)" % (light, ver)
 if rel.get("body") == body and rel.get("name") == name:
     sys.exit(0)
 print(json.dumps({"name": name, "body": body}))
 '
 
-# Prepares a GitHub API session for the compiler/ submodule's repo: sets SLUG, VER (the
+# Prepares a GitHub API session for the fil-c-llvm submodule's repo: sets SLUG, VER (the
 # upstream release this tree is based on, see filc_upstream_version), API, and HDR (a
 # private header file holding the
 # token, never put on a command line). Returns 1, saying why, when publishing is not
@@ -1663,7 +1742,7 @@ print(json.dumps({"name": name, "body": body}))
 filc_github_begin() {
   local token
   SLUG="$(filc_compiler_repo_slug)"
-  if [ -z "$SLUG" ]; then echo "publish: compiler/ is not on GitHub; skipping."; return 1; fi
+  if [ -z "$SLUG" ]; then echo "publish: $FILC_COMPILER_DIR/ is not on GitHub; skipping."; return 1; fi
   token="${FILC_LIGHT_GITHUB_TOKEN:-$(filc_github_token "$SLUG")}"
   if [ -z "$token" ]; then
     echo "publish: no git remote of $SLUG carries an access token; skipping."
@@ -1683,12 +1762,25 @@ filc_github_end() {
 }
 
 # Regenerates the name and text of the release v<VER> from all of its assets, with the
-# description given for the asset <name>; needs a session from filc_github_begin.
+# description given for the asset <name>; needs a session from filc_github_begin. An
+# asset whose description follows from its name alone (a glibc or cosmo package, and
+# git-clone.xz) is described anew, while a musl one keeps its lines, which name the
+# glibc its clang needs.
 filc_publish_page() {   # [$1 = asset name, $2 = its description]
-  local rel id patch latest
+  local rel id patch latest asset
   rel="$(curl -sS -H @"$HDR" "$API/releases/tags/v$VER")"
   id="$(printf '%s' "$rel" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))')"
   if [ -z "$id" ]; then echo "publish: no release v$VER on $SLUG yet" >&2; return 1; fi
+  for asset in $(printf '%s' "$rel" \
+      | python3 -c 'import json,sys; print("\n".join(a["name"] for a in json.load(sys.stdin).get("assets", [])))')
+  do
+    case "$asset" in
+      optfil-*.xz|cosmo-filc-*-linux-*.xz|git-clone.xz)
+        if [ "$asset" != "${1:-}" ]; then
+          set -- "$@" "$asset" "$(filc_asset_description "$asset")"
+        fi ;;
+    esac
+  done
   # The latest release carries the naming in full; an older one links to the README.
   latest="$(curl -sS -H @"$HDR" "$API/releases/latest" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name", ""))' 2>/dev/null)"
@@ -1706,8 +1798,8 @@ filc_publish_page() {   # [$1 = asset name, $2 = its description]
 }
 
 # Publishes dist/<name> (an upstream-named package) on the release v<upstream version> of
-# the compiler/ submodule's GitHub repo, where filc_download_toolchain fetches it from: creates that
-# release (marked latest) when missing, keeps an identical asset, replaces an older one
+# the fil-c-llvm submodule's GitHub repo, where filc_download_toolchain fetches it from:
+# creates that release (marked latest) when missing, keeps an identical asset, replaces an older one
 # of the same name, then regenerates the release's name and text, where its description
 # goes. Its label is its file name, which GitHub shows in place of the name. Without a
 # token (see filc_github_token) it skips publishing and says so.
@@ -1752,6 +1844,71 @@ print("%s %s" % (found[0]["id"], found[0].get("digest") or "-") if found else ""
   fi
   filc_publish_page "$name" "$description" || { filc_github_end; return 1; }
   filc_github_end
+}
+
+# Internal usage:
+#   ./build.sh --publish-git   Also pack the compiler sources' git repository into
+#                              dist/git-clone.xz, and publish it on the release
+#                              v<upstream version> beside the packages, once the rest of
+#                              the run is done. `./build.sh --only --publish-git` does
+#                              only that.
+#
+# Packs the git repository of the compiler sources ($FILC_COMPILER_DIR) into
+# dist/git-clone.xz, then publishes that on the release v<upstream version> like a
+# package (see filc_upload_archive).
+#
+# The archive holds the submodule's own git folder, as <repo>/.git, with a
+# config of its own: `origin` is the GitHub URL without credentials, and there is no
+# `core.worktree`; the reflog, the hooks and the index stay out. Hence it carries no
+# access token and no path of this machine, and a `checkout -f` builds the index anew.
+filc_publish_git() {
+  local slug repo git_dir stage key value archive="$DIST/git-clone.xz"
+  slug="$(filc_compiler_repo_slug)"
+  if [ -z "$slug" ]; then
+    echo "publish-git: $FILC_COMPILER_DIR/ is not on GitHub" >&2
+    return 1
+  fi
+  repo="$(basename "$FILC_COMPILER_DIR")"
+  if ! git_dir="$(git -C "$ROOT/$FILC_COMPILER_DIR" rev-parse --absolute-git-dir)"; then
+    echo "publish-git: $FILC_COMPILER_DIR/ is no git checkout" >&2
+    return 1
+  fi
+  stage="$(mktemp -d "${TMPDIR:-/tmp}/filc-git.XXXXXX")"
+
+  # Writes the config of the packed .git: the format of the repository, and origin.
+  mkdir -p "$stage/$repo/.git"
+  git config -f "$stage/$repo/.git/config" core.repositoryformatversion \
+    "$(git --git-dir="$git_dir" config core.repositoryformatversion || echo 0)"
+  git config -f "$stage/$repo/.git/config" core.filemode true
+  git config -f "$stage/$repo/.git/config" core.bare false
+  git config -f "$stage/$repo/.git/config" core.logallrefupdates true
+  git --git-dir="$git_dir" config --get-regexp '^extensions\.' |
+    while read -r key value; do
+      git config -f "$stage/$repo/.git/config" "$key" "$value"
+    done
+  git config -f "$stage/$repo/.git/config" remote.origin.url "https://github.com/$slug.git"
+  git config -f "$stage/$repo/.git/config" remote.origin.fetch \
+    '+refs/heads/*:refs/remotes/origin/*'
+
+  # Packs the git folder under its new name, adds the config, and checks the archive
+  # before publishing it.
+  mkdir -p "$DIST"
+  rm -f "$archive"
+  if ! tar -C "$git_dir" --transform "s,^\.,$repo/.git," \
+        --exclude=./config --exclude=./logs --exclude=./hooks --exclude=./index \
+        --exclude=./FETCH_HEAD --exclude=./ORIG_HEAD --exclude=./COMMIT_EDITMSG \
+        -cf "$stage/git-clone.tar" . \
+      || ! tar -C "$stage" -rf "$stage/git-clone.tar" "$repo/.git/config" \
+      || ! xz -c "$stage/git-clone.tar" > "$archive" \
+      || ! xz -t "$archive"
+  then
+    rm -rf "$stage" "$archive"
+    echo "publish-git: cannot pack $repo/.git" >&2
+    return 1
+  fi
+  rm -rf "$stage"
+  echo "publish-git: packed $archive"
+  filc_upload_archive git-clone.xz
 }
 
 # ---------- /opt/fil: the glibc toolchain installed the way upstream's optfil/ does ----------
@@ -1981,6 +2138,12 @@ filc_optfil_portion_dir() {   # $1 = portion keyword
 filc_optfil_layout() {
   local new="$BUILD_DIR/optfil-root.new" root="$BUILD_DIR/optfil-root"
   echo "===== optfil: laying out $root/opt/fil ====="
+  # The loader of the toolchain's own glibc finds no host libstdc++ or libgcc_s.
+  if ! filc_clang_is_universal; then
+    echo "ERROR: the /opt/fil toolchain needs a clang with its C++ runtime linked in" \
+         "(see --universal); $(filc_clang_dir) has another one." >&2
+    exit 1
+  fi
   rm -rf "$new"
   mkdir -p "$new/opt/fil"
   ( cd "$new/opt/fil"
@@ -2223,7 +2386,17 @@ filc_usage() {
   exit 2
 }
 
-# Sets MODE, STATIC, NOXZ, PUBLISH, SYNC, FILC_SYNC_FILTER, SYNC_STALE,
+# Prints the usage notes at the top of this file; with <internal> set, also each
+# "Internal usage:" block, which the comment of an internal helper's function holds.
+filc_help() {   # [$1 = internal]
+  sed -n '2,/^set -euo pipefail$/{/^set -euo/!p}' "${BASH_SOURCE[0]}"
+  [ -n "${1:-}" ] || return 0
+  echo "#"
+  echo "# Internal helpers:"
+  sed -n '/^# Internal usage:$/,/^#$/{/^# Internal usage:$/d;/^#$/d;p}' "${BASH_SOURCE[0]}"
+}
+
+# Sets MODE, STATIC, NOXZ, PUBLISH, DOWNLOAD, SYNC, FILC_SYNC_FILTER, SYNC_STALE,
 # FILC_CLEAN_FILTER, ARCHS, LIBC, INSTALL, HEADLESS and BUILD_DIR from the arguments, in
 # order: a later flag overrides an earlier one. MODE is light (the default: build this
 # tree with the prebuilt clang), source (build everything), download (fetch only), clean
@@ -2233,6 +2406,8 @@ filc_parse_args() {
   STATIC=""
   NOXZ=""
   PUBLISH=0          # publishing is asked for
+  PUBLISH_GIT=0
+  DOWNLOAD=1         # the prebuilt toolchain may be fetched
   SYNC=1             # the tree's toolchain is updated once the build is done
   FILC_SYNC_FILTER=""
   # With --sync=<re>, the changed portions it does not match build as well.
@@ -2242,7 +2417,16 @@ filc_parse_args() {
   LIBC=glibc         # the libc slice
   INSTALL=1          # with glibc: install the toolchain at /opt/fil
   HEADLESS=""        # never ask anything
-  local asked_publish="" asked_build="" nobuild=""
+  local asked_publish="" asked_build="" nobuild="" asked_help="" internal="" arg
+  # --only disables all default operations.
+  for arg in "$@"; do
+    if [ "$arg" = --only ]; then
+      nobuild=1
+      DOWNLOAD=0
+      INSTALL=0
+      SYNC=0
+    fi
+  done
   while [ $# -gt 0 ]; do
     case "$1" in
       --nightly|--latest)   MODE=source; asked_build=1; nobuild="" ;;
@@ -2250,6 +2434,9 @@ filc_parse_args() {
       --universal|--static|--general) STATIC=static ;;
       --no-universal|--no-static|--non-universal|--non-static) STATIC="" ;;
       --no-build|--no-rebuild) nobuild=1 ;;
+      --no-download)        DOWNLOAD=0 ;;
+      --download)           DOWNLOAD=1 ;;
+      --only)               ;;
       --sync)               SYNC=1; FILC_SYNC_FILTER='^.*$' ;;
       --sync=*)             SYNC=1; FILC_SYNC_FILTER="${1#--sync=}"; [ -n "$FILC_SYNC_FILTER" ] || FILC_SYNC_FILTER='^.*$' ;;
       --no-sync)            SYNC=0; FILC_SYNC_FILTER="" ;;
@@ -2277,6 +2464,7 @@ filc_parse_args() {
       --no-xz|--no-archive) NOXZ=1 ;;
       --no-publish|--no-upload) PUBLISH=0; asked_publish="" ;;
       --export)             MODE=export ;;
+      --publish-git)        PUBLISH_GIT=1 ;;
       --publish|--upload)   PUBLISH=1; asked_publish=1 ;;
       --prerequisites)      MODE=prerequisites ;;
       --glibc|--gnu)        LIBC=glibc ;;
@@ -2285,11 +2473,16 @@ filc_parse_args() {
       --install|--setup)    INSTALL=1 ;;
       --no-install|--no-setup) INSTALL=0 ;;
       --headless)           HEADLESS=1 ;;
-      -h|--help)            sed -n '2,/^set -euo pipefail$/{/^set -euo/!p}' "${BASH_SOURCE[0]}"; exit 0 ;;
+      -h|--help)            asked_help=1 ;;
+      --internal)           internal=1 ;;
       *) filc_usage ;;
     esac
     shift
   done
+  if [ -n "$asked_help" ]; then
+    filc_help "$internal"
+    exit 0
+  fi
   # --no-build: publishing what dist/ already holds with --publish, only cleaning with
   # --clean, else only fetching. --clean alone only cleans; with a build flag or
   # --publish it cleans, then builds (an export never builds).
@@ -2330,7 +2523,7 @@ filc_build_arch() {   # $1 = marker file of the run's start
     filc_install_cross "$ARCH"
     filc_cross_helper
   fi
-  filc_build_clang "$STATIC"
+  filc_build_clang "$(filc_clang_linkage dynamic)"
   # Each portion is kept when its sources did not change since it built (the runtime does
   # not depend on how clang links its C++ runtime, so a universal build reuses it too).
   filc_build_runtime_libc
@@ -2357,6 +2550,44 @@ filc_sync_arch() {
 filc_pack_arch() {   # $1 = marker file of the run's start
   if [ -n "$NOXZ" ]; then echo "(--no-xz: skipping archive generation)"; return 0; fi
   [ "$LIBC" = glibc ] || filc_upstream_package "$1"
+}
+
+# Internal usage:
+#   ./build.sh --no-download   Fetch no prebuilt toolchain: --no-build then fetches
+#                              nothing, and the default build keeps the clang its build
+#                              folder already has, or builds as --nightly without one.
+#   ./build.sh --download      Fetch it again (the default; this turns --no-download off).
+#
+# --no-build: fetches the prebuilt toolchain of each arch of ARCHS. With --install (and
+# glibc) it goes to /opt/fil, flat, as upstream installs it; with --no-install into the
+# tree (build/ + pizfix/), once its clang runs. A foreign arch's toolchain goes to
+# neither.
+filc_download_all() {
+  local arch stage="$TOOLS/prebuilt-$(filc_host_arch)"
+  case " $ARCHS " in
+    *" $(filc_host_arch) "*)
+      if [ "$LIBC" = glibc ] && [ "$INSTALL" = 1 ]; then filc_optfil_root; fi ;;
+  esac
+  for arch in $ARCHS; do
+    filc_use_arch "$arch"
+    if [ -n "$CROSS" ]; then
+      echo "(--no-build: $arch is not this machine's arch; nothing to fetch for it)"
+    elif [ "$LIBC" != glibc ]; then
+      echo "ERROR: no prebuilt $LIBC toolchain is published (only the glibc one, as the" \
+           "optfil package); build it: ./build.sh --$LIBC" >&2
+      exit 1
+    elif [ "$INSTALL" = 1 ]; then
+      filc_download_install || exit 1
+    else
+      rm -rf "$stage"
+      if ! filc_download_toolchain "$stage"; then
+        rm -rf "$stage"
+        exit 1
+      fi
+      filc_prebuilt_to_tree "$stage"
+      rm -rf "$stage"
+    fi
+  done
 }
 
 filc_main() {
@@ -2431,27 +2662,8 @@ filc_main() {
       fi
       ;;
     download)
-      # With --install (and glibc) the prebuilt toolchain goes to /opt/fil, flat, as
-      # upstream installs it; with --no-install into the tree (build/ + pizfix/). A
-      # foreign arch's toolchain goes to neither.
-      case " $ARCHS " in
-        *" $(filc_host_arch) "*)
-          if [ "$LIBC" = glibc ] && [ "$INSTALL" = 1 ]; then filc_optfil_root; fi ;;
-      esac
-      for arch in $ARCHS; do
-        filc_use_arch "$arch"
-        if [ -n "$CROSS" ]; then
-          echo "(--no-build: $arch is not this machine's arch; nothing to fetch for it)"
-        elif [ "$LIBC" != glibc ]; then
-          echo "ERROR: no prebuilt $LIBC toolchain is published (only the glibc one, as the" \
-               "optfil package); build it: ./build.sh --$LIBC" >&2
-          exit 1
-        elif [ "$INSTALL" = 1 ]; then
-          filc_download_install || exit 1
-        else
-          filc_download_toolchain || exit 1
-        fi
-      done
+      # Fetches nothing while fetching is off (see filc_download_all).
+      [ "$DOWNLOAD" = 0 ] || filc_download_all
       ;;
     light|source)
       case " $ARCHS " in
@@ -2477,10 +2689,10 @@ filc_main() {
           echo ">>> no prebuilt $arch toolchain; building it from source (as --nightly)."
           filc_build_arch "$started"
         fi
-        if [ "$LIBC" = glibc ]; then
+        if filc_optfil_wanted; then
           if [ -z "$CROSS" ] && [ "$INSTALL" = 1 ]; then
             filc_optfil_install "$started"
-          elif [ "$MODE" = source ] || [ "$PUBLISH" = 1 ]; then
+          else
             # Packed as any build packs: always by --nightly, by the default one only
             # to publish (it builds both glibcs again, for /opt/fil).
             filc_optfil_package "$started"
@@ -2489,6 +2701,9 @@ filc_main() {
       done
       ;;
   esac
+  if [ "$PUBLISH_GIT" = 1 ]; then
+    filc_publish_git || exit 1
+  fi
 }
 
 # Runs only when executed; tests/build.spec.sh sources this file for its functions.
