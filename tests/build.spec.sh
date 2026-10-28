@@ -74,6 +74,18 @@ _parse --nightly
 expect 'a build syncs by default, and publishes only when asked' '0 1' "$PUBLISH $SYNC"
 _parse --export
 expect '--export only exports, without publishing' 'export 0' "$MODE $PUBLISH"
+_parse --no-download
+expect '--no-download keeps the mode, and fetches nothing' 'light 0' "$MODE $DOWNLOAD"
+_parse --no-download --download
+expect '--download fetches again' 'light 1' "$MODE $DOWNLOAD"
+_parse --only
+expect '--only disables all default operations' 'download 0 0 0 0' \
+    "$MODE $DOWNLOAD $INSTALL $SYNC $PUBLISH"
+_parse --only --publish
+expect '--only --publish publishes dist/' 'upload 1' "$MODE $PUBLISH"
+_parse --only --build --install
+expect '--only --build builds, and installs only when asked' 'light 0 1 0' \
+    "$MODE $DOWNLOAD $INSTALL $SYNC"
 
 test_section 'filc_main -- the run marker exists only where an archive is packed'
 
@@ -263,6 +275,34 @@ _parse --prerequisites
 expect '--prerequisites only fetches the prerequisites' prerequisites "$MODE"
 _parse --install
 expect '--install no longer means the prerequisites' light "$MODE"
+expect 'and installs at /opt/fil' /opt/fil "$INSTALL_DIR"
+_parse --install=/x/fil
+expect '--install=<dir> installs into <dir>' '1 /x/fil' "$INSTALL $INSTALL_DIR"
+_parse --setup=rel/fil
+expect '--setup=<dir> takes a relative <dir> from the current folder' "$(pwd)/rel/fil" "$INSTALL_DIR"
+_parse --install=/x/fil --install
+expect 'a later --install installs at /opt/fil again' /opt/fil "$INSTALL_DIR"
+_parse --only --download --install=/x/fil --arch=arm
+expect '--only --download --install=<dir> --arch=arm fetches aarch64 into <dir>' \
+    'download 1 1 /x/fil aarch64' "$MODE $DOWNLOAD $INSTALL $INSTALL_DIR $ARCHS"
+_parse
+
+test_section 'filc_install_needs_root -- root only for a folder this user cannot write'
+
+mkdir -p "$_sb/inst-own"
+expect 'a writable folder needs no root' no \
+    "$(INSTALL_DIR=$_sb/inst-own; filc_install_needs_root && echo yes || echo no)"
+expect 'nor a folder to make inside one' no \
+    "$(INSTALL_DIR=$_sb/inst-own/a/b; filc_install_needs_root && echo yes || echo no)"
+if [ "$(id -u)" != 0 ]; then
+    mkdir -p "$_sb/inst-ro"; chmod 555 "$_sb/inst-ro"
+    expect 'a folder this user cannot write needs root' yes \
+        "$(INSTALL_DIR=$_sb/inst-ro/fil; filc_install_needs_root && echo yes || echo no)"
+    chmod 755 "$_sb/inst-ro"
+else
+    test_skip 'a folder this user cannot write needs root' 'root writes any folder'
+fi
+
 
 
 # ---- specs: platform identity ---------------------------------------------
@@ -493,6 +533,7 @@ _di_run() {
         _log=$_sb/di.log; : > "$_log"
         sudo() { echo "sudo $*" | sed "s#$TOOLS/unpack-[^/]*#TOOLS#g" >> "$_log"; }
         filc_optfil_installed() { [ -n "${_INSTALLED:-}" ]; }
+        filc_install_needs_root() { [ -z "${_NO_ROOT:-}" ]; }
         filc_optfil_clang_runs() { [ -z "${_NO_CLANG:-}" ]; }
         filc_optfil_installed_version() { echo 'clang version 20 (Fil-C)'; }
         FILC_SYNC_FILTER="${_SYNC:-}"
@@ -526,6 +567,25 @@ expect 'a package that lists no portions installs all of it too' \
     "$(_INSTALLED=1 _SYNC=pas _di_steps)"
 expect 'a package whose clang does not run here leaves /opt/fil alone' 'exit@1' \
     "$(_NO_CLANG=1 _di_steps)"
+test_section 'filc_download_all, filc_optfil_root -- a foreign arch and --install=<dir>'
+
+# Runs filc_download_all for <_ARCHS> into <_DIR> (--install=<dir>, else /opt/fil),
+# with the install and the root request recorded.
+_da_run() {
+    (
+        filc_download_install() { echo "install@$ARCH@$INSTALL_DIR"; }
+        filc_optfil_root() { echo root; }
+        ARCHS=$_ARCHS LIBC=glibc INSTALL=1 INSTALL_DIR=${_DIR:-/opt/fil}
+        filc_download_all 2>&1 | grep -oE '^(install@.*|root)$|nothing to fetch' | tr '\n' ' ' | sed 's/ $//'
+    )
+}
+expect 'without a folder, a foreign arch is not fetched, with no root asked' 'nothing to fetch' \
+    "$(_ARCHS=aarch64 _da_run)"
+expect 'with --install=<dir>, it is fetched and installed there' 'root install@aarch64@/x/fil' \
+    "$(_ARCHS=aarch64 _DIR=/x/fil _da_run)"
+expect 'filc_optfil_root asks for no root for a writable folder' '' \
+    "$( (sudo() { echo sudo; }; ARCHS=$(filc_host_arch); INSTALL_DIR=$_sb/inst-own; HEADLESS=
+        filc_optfil_root; echo "$FILC_SUDO_KEEPALIVE") 2>&1 | tr -d '\n')"
 echo garbage > "$_srv/optfil-0.685-linux-x86_64.xz"
 expect 'a broken archive leaves /opt/fil alone' 'exit@1' "$(_di_steps)"
 rm -f "$_srv"/optfil-*.xz
@@ -1076,6 +1136,11 @@ expect '--no-build --install fails with no prebuilt toolchain' 'root exit@1' \
     "$(_NOPREBUILT=1 _light_run --no-build --install)"
 expect '--no-build --musl fails: no prebuilt musl toolchain is published' 'exit@1' \
     "$(_light_run --no-build --install --musl)"
+_light_reset
+expect '--no-build --no-download does nothing' '' "$(_light_run --no-build --no-download)"
+expect '--only does nothing, not even ask for root' '' "$(_light_run --only --install)"
+expect 'a build with --install=<dir> stops, as a build installs at /opt/fil only' 'exit@1' \
+    "$(_light_run --install="$_sb/lt-inst")"
 
 
 test_section '--musl -- its own build folder, the glibc one'"'"'s clang, upstream'"'"'s package'

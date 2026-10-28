@@ -118,6 +118,8 @@
 #                              text (only that, when dist/ holds no archive). With
 #                              --clean: only clean. Otherwise: see above (fetch only).
 #
+#   ./build.sh --only          Disables all default operations.
+#
 #                              Flags take effect in order, so a later one overrides an
 #                              earlier one: --no-publish --publish publishes, --sync
 #                              --no-sync does not sync.
@@ -139,6 +141,12 @@
 #                              /opt/fil, which is emptied first), and pack it as
 #                              optfil-<version>-linux-<arch>.xz. The default; it asks for the
 #                              root password up front (sudo).
+#   ./build.sh --install=<dir> With --no-build: the same, into <dir> in place of /opt/fil (a
+#   ./build.sh --setup=<dir>   folder that a container mounts at /opt/fil, say), and for any
+#                              arch: a foreign arch is installed too, with no check that its
+#                              clang runs. It asks for the root password only when <dir> (or
+#                              the nearest folder above it that exists) is not writable. A
+#                              build still installs at /opt/fil only.
 #   ./build.sh --no-install    Leave /opt/fil alone: the toolchain stays in the build folder
 #   ./build.sh --no-setup      and this tree, where it finds its paths at run time; its
 #                              optfil-<version>-linux-<arch>.xz is still made, built under
@@ -397,10 +405,11 @@ filc_fetch_optfil() {   # $1 = dir
 }
 
 # --no-build with --install: installs the prebuilt toolchain of the current arch at
-# /opt/fil in its flat layout, as a build installs it: its fil.tar.xz is unpacked with no
-# root into a stage first, then put there as root (see filc_optfil_install_tree),
-# replacing what /opt/fil held. Under --sync=<re>, only the portions of the package <re>
-# matches go there (see filc_optfil_partial), the others keeping what they have.
+# INSTALL_DIR (/opt/fil, unless --install=<dir>) in its flat layout, as a build installs
+# it: its fil.tar.xz is unpacked with no root into a stage first, then put there (see
+# filc_optfil_install_tree), replacing what INSTALL_DIR held. Under --sync=<re>, only the
+# portions of the package <re> matches go there (see filc_optfil_partial), the others
+# keeping what they have. The clang of a foreign arch is not run, as it cannot run here.
 filc_download_install() {
   local unpack="$TOOLS/unpack-$ARCH" tree f kw
   local -a kws=()
@@ -408,13 +417,13 @@ filc_download_install() {
   tree="$unpack/stage/fil"
   mkdir -p "$unpack/stage"
   if ! tar -C "$unpack/stage" -xJf "$unpack"/optfil-*/fil.tar.xz || [ ! -x "$tree/bin/filcc" ]; then
-    echo "ERROR: the prebuilt package holds no /opt/fil toolchain; /opt/fil is left as it is." >&2
+    echo "ERROR: the prebuilt package holds no /opt/fil toolchain; $INSTALL_DIR is left as it is." >&2
     rm -rf "$unpack"
     return 1
   fi
-  if ! filc_optfil_clang_runs "$tree"; then
+  if [ -z "$CROSS" ] && ! filc_optfil_clang_runs "$tree"; then
     echo "ERROR: the clang of the prebuilt package does not run here, through the package's" \
-         "own loader (it may need a C++ runtime that only the host has); /opt/fil is left" \
+         "own loader (it may need a C++ runtime that only the host has); $INSTALL_DIR is left" \
          "as it is. A build links the clang's C++ runtime in: ./build.sh --publish makes" \
          "and publishes a package whose clang runs." >&2
     rm -rf "$unpack"
@@ -425,17 +434,21 @@ filc_download_install() {
       kw="${f##*/}"; kw="${kw%.list}"
       if printf '%s\n' "$kw" | grep -Eq -- "$FILC_SYNC_FILTER"; then kws+=("$kw"); fi
     done
-    echo "===== optfil: copying the portions --sync=$FILC_SYNC_FILTER matches into /opt/fil ====="
+    echo "===== optfil: copying the portions --sync=$FILC_SYNC_FILTER matches into $INSTALL_DIR ====="
     if [ "${#kws[@]}" = 0 ]; then
-      echo "(--sync=$FILC_SYNC_FILTER matches no portion of the package; /opt/fil is left as it is)"
+      echo "(--sync=$FILC_SYNC_FILTER matches no portion of the package; $INSTALL_DIR is left as it is)"
     else
       filc_optfil_install_tree "$tree" "${kws[@]}"
     fi
   else
-    echo "===== optfil: installing the prebuilt toolchain at /opt/fil (its old content is replaced) ====="
+    echo "===== optfil: installing the prebuilt toolchain at $INSTALL_DIR (its old content is replaced) ====="
     filc_optfil_install_tree "$tree"
   fi
   rm -rf "$unpack"
+  if [ -n "$CROSS" ]; then
+    echo "Prebuilt $ARCH toolchain installed at $INSTALL_DIR (its clang does not run here)."
+    return 0
+  fi
   local version
   if ! version="$(filc_optfil_installed_version)"; then
     echo "ERROR: the installed clang does not run: $(printf '%s\n' "$version" | head -1)" >&2
@@ -444,10 +457,23 @@ filc_download_install() {
   echo "Prebuilt toolchain ready: $(printf '%s\n' "$version" | head -1)"
 }
 
-# Prints the version banner of the clang installed at /opt/fil, or its error; fails when
-# that clang does not run.
+# Prints the version banner of the clang installed at INSTALL_DIR, or its error; fails
+# when that clang does not run. Outside /opt/fil, whose path its loader names, it runs
+# through the folder's own loader.
 filc_optfil_installed_version() {
-  /opt/fil/bin/filcc --version 2>&1
+  if ! filc_install_custom; then
+    /opt/fil/bin/filcc --version 2>&1
+    return
+  fi
+  local clang loader
+  for clang in "$INSTALL_DIR"/bin/filcc-clang-*; do
+    for loader in "$INSTALL_DIR"/lib/ld-fil1-*.so; do
+      "$loader" --library-path "$INSTALL_DIR/lib" "$clang" --version 2>&1
+      return
+    done
+  done
+  echo "no clang with its loader in $INSTALL_DIR"
+  return 1
 }
 
 # Succeeds when the clang of the /opt/fil tree <dir>, still unpacked elsewhere, runs:
@@ -1640,6 +1666,41 @@ filc_warning() {   # $1 = first line, $2... = further lines
   printf '\n' >&2
 }
 
+# Tells whether installing at INSTALL_DIR needs root: the folder, or the nearest one above
+# it that exists, is not writable.
+filc_install_needs_root() {
+  local dir="${INSTALL_DIR:-/opt/fil}"
+  while [ ! -e "$dir" ]; do dir="$(dirname "$dir")"; done
+  [ ! -w "$dir" ]
+}
+
+# Runs <command> to install at INSTALL_DIR: as root when that needs root.
+filc_install_run() {
+  if filc_install_needs_root; then sudo "$@"; else "$@"; fi
+}
+
+# Tells whether this run installs any toolchain: --install with glibc, and an arch that
+# runs on this machine among ARCHS, or any arch with --install=<dir> (see
+# filc_install_wanted).
+filc_install_any() {
+  [ "${LIBC:-glibc}" = glibc ] && [ "${INSTALL:-0}" = 1 ] || return 1
+  filc_install_custom && return 0
+  case " $ARCHS " in *" $(filc_host_arch) "*) return 0 ;; esac
+  return 1
+}
+
+# Tells whether --install=<dir> named another folder than /opt/fil.
+filc_install_custom() {
+  [ "${INSTALL_DIR:-/opt/fil}" != /opt/fil ]
+}
+
+# Tells whether this run installs the toolchain of the current arch (see filc_use_arch):
+# filc_install_any, with that arch alone in ARCHS.
+filc_install_wanted() {
+  local ARCHS="${ARCH:-$(filc_host_arch)}"
+  filc_install_any
+}
+
 # Gets root for --install (sudo), asking for the password up front, as a build takes
 # hours, and keeps sudo's timestamp fresh until the run ends (FILC_SUDO_KEEPALIVE): the
 # EXIT trap of filc_main ends that loop, and the loop also ends by itself once this
@@ -1647,17 +1708,19 @@ filc_warning() {   # $1 = first line, $2... = further lines
 # Under --headless it asks nothing: without a password at hand it warns, and turns
 # --install off for this run.
 filc_optfil_root() {
+  # A folder that this user can write needs no root.
+  filc_install_needs_root || return 0
   if [ -n "$HEADLESS" ]; then
     if ! sudo -n true 2>/dev/null; then
-      filc_warning "No root password at hand (--headless), so /opt/fil is left alone:" \
+      filc_warning "No root password at hand (--headless), so $INSTALL_DIR is left alone:" \
         "the glibc toolchain stays in $HOST_BUILD_DIR (and this tree, $ROOT)" \
-        "instead of /opt/fil, and finds its paths at run time."
+        "instead of $INSTALL_DIR, and finds its paths at run time."
       INSTALL=0
       return 0
     fi
   else
-    echo "Installing the toolchain at /opt/fil needs root (--no-install leaves /opt/fil alone):"
-    sudo -v || { echo "ERROR: no root, so the toolchain cannot be installed at /opt/fil." >&2; exit 1; }
+    echo "Installing the toolchain at $INSTALL_DIR needs root (--no-install leaves it alone):"
+    sudo -v || { echo "ERROR: no root, so the toolchain cannot be installed at $INSTALL_DIR." >&2; exit 1; }
   fi
   local run=$$
   ( while sleep 60; do
@@ -1824,8 +1887,8 @@ filc_usage() {
   exit 2
 }
 
-# Sets MODE, STATIC, NOXZ, PUBLISH, SYNC, FILC_SYNC_FILTER, SYNC_STALE,
-# FILC_CLEAN_FILTER, ARCHS, LIBC, INSTALL, HEADLESS and BUILD_DIR from the arguments, in
+# Sets MODE, STATIC, NOXZ, PUBLISH, DOWNLOAD, SYNC, FILC_SYNC_FILTER, SYNC_STALE,
+# FILC_CLEAN_FILTER, ARCHS, LIBC, INSTALL, INSTALL_DIR, HEADLESS and BUILD_DIR from the arguments, in
 # order: a later flag overrides an earlier one. MODE is light (the default: build this
 # tree with the prebuilt clang), source (build everything), download (fetch only), clean
 # (clean only), export, upload (publish dist/ without building) or prerequisites.
@@ -1834,6 +1897,7 @@ filc_parse_args() {
   STATIC=""
   NOXZ=""
   PUBLISH=0          # publishing is asked for
+  DOWNLOAD=1         # the prebuilt toolchain may be fetched
   SYNC=1             # the tree's toolchain is updated once the build is done
   FILC_SYNC_FILTER=""
   # With --sync=<re>, the changed portions it does not match build as well.
@@ -1841,9 +1905,19 @@ filc_parse_args() {
   FILC_CLEAN_FILTER=""
   ARCHS="$(filc_host_arch)"
   LIBC=glibc         # the libc slice
-  INSTALL=1          # with glibc: install the toolchain at /opt/fil
+  INSTALL=1          # with glibc: install the toolchain at INSTALL_DIR
+  INSTALL_DIR=/opt/fil
   HEADLESS=""        # never ask anything
-  local asked_publish="" asked_build="" nobuild=""
+  local asked_publish="" asked_build="" nobuild="" arg
+  # --only disables all default operations.
+  for arg in "$@"; do
+    if [ "$arg" = --only ]; then
+      nobuild=1
+      DOWNLOAD=0
+      INSTALL=0
+      SYNC=0
+    fi
+  done
   while [ $# -gt 0 ]; do
     case "$1" in
       --nightly|--latest)   MODE=source; asked_build=1; nobuild="" ;;
@@ -1851,6 +1925,9 @@ filc_parse_args() {
       --universal|--static|--general) STATIC=static ;;
       --no-universal|--no-static|--non-universal|--non-static) STATIC="" ;;
       --no-build|--no-rebuild) nobuild=1 ;;
+      --no-download)        DOWNLOAD=0 ;;
+      --download)           DOWNLOAD=1 ;;
+      --only)               ;;
       --sync)               SYNC=1; FILC_SYNC_FILTER='^.*$' ;;
       --sync=*)             SYNC=1; FILC_SYNC_FILTER="${1#--sync=}"; [ -n "$FILC_SYNC_FILTER" ] || FILC_SYNC_FILTER='^.*$' ;;
       --no-sync)            SYNC=0; FILC_SYNC_FILTER="" ;;
@@ -1882,7 +1959,10 @@ filc_parse_args() {
       --prerequisites)      MODE=prerequisites ;;
       --glibc|--gnu)        LIBC=glibc ;;
       --musl)               LIBC=musl ;;
-      --install|--setup)    INSTALL=1 ;;
+      --install|--setup)    INSTALL=1; INSTALL_DIR=/opt/fil ;;
+      --install=*|--setup=*)
+        INSTALL=1
+        case "${1#*=}" in /*) INSTALL_DIR="${1#*=}" ;; *) INSTALL_DIR="$(pwd)/${1#*=}" ;; esac ;;
       --no-install|--no-setup) INSTALL=0 ;;
       --headless)           HEADLESS=1 ;;
       -h|--help)            sed -n '2,/^set -euo pipefail$/{/^set -euo/!p}' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -1959,6 +2039,35 @@ filc_pack_arch() {   # $1 = marker file of the run's start
   [ "$LIBC" = glibc ] || filc_upstream_package "$1"
 }
 
+# Internal usage:
+#   ./build.sh --no-download   Fetch no prebuilt toolchain: --no-build then fetches
+#                              nothing.
+#   ./build.sh --download      Fetch it again (the default; this turns --no-download off).
+#
+# --no-build: fetches the prebuilt toolchain of each arch of ARCHS. With --install (and
+# glibc) it goes to /opt/fil, flat, as upstream installs it (or to the folder
+# --install=<dir> names); with --no-install into the tree (build/ + pizfix/). A foreign
+# arch's toolchain goes only to a folder --install=<dir> names.
+filc_download_all() {
+  local arch
+  if filc_install_any; then filc_optfil_root; fi
+  for arch in $ARCHS; do
+    filc_use_arch "$arch"
+    if [ -n "$CROSS" ] && ! filc_install_wanted; then
+      echo "(--no-build: $arch is not this machine's arch; nothing to fetch for it, unless" \
+           "--install=<dir> names a folder to install it into)"
+    elif [ "$LIBC" != glibc ]; then
+      echo "ERROR: no prebuilt $LIBC toolchain is published (only the glibc one, as the" \
+           "optfil package); build it: ./build.sh --$LIBC" >&2
+      exit 1
+    elif [ "$INSTALL" = 1 ]; then
+      filc_download_install || exit 1
+    else
+      filc_download_toolchain || exit 1
+    fi
+  done
+}
+
 filc_main() {
   BUILT=""
   PREBUILT=""
@@ -2032,33 +2141,17 @@ filc_main() {
       fi
       ;;
     download)
-      # With --install (and glibc) the prebuilt toolchain goes to /opt/fil, flat, as
-      # upstream installs it; with --no-install into the tree (build/ + pizfix/). A
-      # foreign arch's toolchain goes to neither.
-      case " $ARCHS " in
-        *" $(filc_host_arch) "*)
-          if [ "$LIBC" = glibc ] && [ "$INSTALL" = 1 ]; then filc_optfil_root; fi ;;
-      esac
-      for arch in $ARCHS; do
-        filc_use_arch "$arch"
-        if [ -n "$CROSS" ]; then
-          echo "(--no-build: $arch is not this machine's arch; nothing to fetch for it)"
-        elif [ "$LIBC" != glibc ]; then
-          echo "ERROR: no prebuilt $LIBC toolchain is published (only the glibc one, as the" \
-               "optfil package); build it: ./build.sh --$LIBC" >&2
-          exit 1
-        elif [ "$INSTALL" = 1 ]; then
-          filc_download_install || exit 1
-        else
-          filc_download_toolchain || exit 1
-        fi
-      done
+      # Fetches nothing while fetching is off (see filc_download_all).
+      [ "$DOWNLOAD" = 0 ] || filc_download_all
       ;;
     light|source)
-      case " $ARCHS " in
-        *" $(filc_host_arch) "*)
-          if [ "$LIBC" = glibc ] && [ "$INSTALL" = 1 ]; then filc_optfil_root; fi ;;
-      esac
+      # A build installs at /opt/fil only, as upstream's optfil/build_opt.sh does.
+      if [ "$INSTALL" = 1 ] && filc_install_custom; then
+        echo "ERROR: --install=<dir> installs a prebuilt toolchain only (with --no-build);" \
+             "a build installs at /opt/fil." >&2
+        exit 1
+      fi
+      if filc_install_any; then filc_optfil_root; fi
       filc_install_bison
       for arch in $ARCHS; do
         filc_use_arch "$arch"
@@ -2069,7 +2162,7 @@ filc_main() {
           filc_build_arch "$started"
         fi
         if [ "$LIBC" = glibc ]; then
-          if [ -z "$CROSS" ] && [ "$INSTALL" = 1 ]; then
+          if filc_install_wanted; then
             filc_optfil_install "$started"
           elif [ "$MODE" = source ] || [ "$PUBLISH" = 1 ]; then
             # Packed as any build packs: always by --nightly, by the default one only
