@@ -1,0 +1,37 @@
+#!/bin/sh
+# Installs the Fil-C @LIBC@ toolchain, version @VERSION@, at /opt/fil-@LIBC@ (or the
+# folder --prefix=<dir> names): extracts fil.tar.xz there, over the files it holds, then
+# points the toolchain at that folder through its own setup.sh.
+#
+# /opt/fil is the glibc toolchain's folder; hence it takes --share-opt-fil to install
+# there.
+#
+# The build script of Fil-C-Light writes this file into each optfil-@LIBC@ package, with
+# the libc and the version filled in.
+set -e
+prefix=/opt/fil-@LIBC@
+share=""
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            echo "Usage: ./setup.sh [--prefix=<dir>] [--share-opt-fil] [-u|--unattended]"
+            echo "Installs the Fil-C @LIBC@ toolchain @VERSION@ at $prefix (or <dir>)."
+            echo "--share-opt-fil allows /opt/fil, the glibc toolchain's folder."
+            exit 0 ;;
+        --prefix=*) prefix=${arg#--prefix=} ;;
+        --share-opt-fil) share=1 ;;
+        -u|--unattended) ;;
+        *) echo "setup.sh: unknown option '$arg' (see --help)" >&2; exit 2 ;;
+    esac
+done
+if [ "${prefix%/}" = /opt/fil ] && [ -z "$share" ]; then
+    echo "setup.sh: /opt/fil is the glibc toolchain's folder; pick another --prefix," \
+         "or pass --share-opt-fil." >&2
+    exit 2
+fi
+here=$(cd "$(dirname "$0")" && pwd)
+mkdir -p "$prefix"
+tar -C "$prefix" --strip-components=1 --no-same-owner -xJf "$here/fil.tar.xz"
+cd "$prefix"
+sh ./setup.sh
+echo "Fil-C @LIBC@ @VERSION@ is installed at $prefix; add $prefix/build/bin to PATH."

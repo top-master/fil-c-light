@@ -274,6 +274,14 @@ for _f in --gnu --glibc; do
 done
 _parse --musl
 expect '--musl picks musl' musl "$LIBC"
+expect 'and installs nothing unless asked' 0 "$INSTALL"
+_parse --install --musl
+expect '--install installs it, before or after --musl' '1 /opt/fil' "$INSTALL $INSTALL_DIR"
+_parse --cosmo --install=/x/cosmo
+expect 'and so does --install=<dir>, for cosmo too' '1 /x/cosmo' "$INSTALL $INSTALL_DIR"
+_parse --musl --install --no-install
+expect 'a later --no-install turns it off again' 0 "$INSTALL"
+_parse
 for _f in --no-install --no-setup; do
     _parse "$_f"
     expect "$_f leaves /opt/fil alone" 0 "$INSTALL"
@@ -566,12 +574,12 @@ _di_run() {
 _di_steps() { _di_run | tr '\n' '|' | sed 's/|$//'; }
 _archive optfil-0.685-linux-x86_64.xz prebuilt
 expect 'it unpacks the package into a stage, then puts all of it at /opt/fil as root' \
-    'sudo mkdir -p /opt/fil|sudo rsync -rlptD --delete TOOLS/stage/fil/ /opt/fil/|exit@0' \
+    'sudo mkdir -p /opt/fil|sudo rsync -rlptD TOOLS/stage/fil/ /opt/fil/|exit@0' \
     "$(_di_steps)"
 expect 'and keeps neither the archive nor its unpacking' '' "$(ls "$TOOLS" 2>/dev/null)"
 _NOSETUP=1 _archive optfil-0.685-linux-x86_64.xz prebuilt
 expect 'a package without its setup.sh installs the same way (the stage needs none)' \
-    'sudo mkdir -p /opt/fil|sudo rsync -rlptD --delete TOOLS/stage/fil/ /opt/fil/|exit@0' \
+    'sudo mkdir -p /opt/fil|sudo rsync -rlptD TOOLS/stage/fil/ /opt/fil/|exit@0' \
     "$(_di_steps)"
 _LISTS=1 _archive optfil-0.685-linux-x86_64.xz prebuilt
 expect 'under --sync=<re> only the portions it matches go to /opt/fil' \
@@ -580,11 +588,11 @@ expect 'under --sync=<re> only the portions it matches go to /opt/fil' \
 expect 'a filter that matches no portion leaves /opt/fil alone' 'exit@0' \
     "$(_INSTALLED=1 _SYNC=nothing _di_steps)"
 expect 'with no toolchain at /opt/fil yet, --sync installs all of it' \
-    'sudo mkdir -p /opt/fil|sudo rsync -rlptD --delete TOOLS/stage/fil/ /opt/fil/|exit@0' \
+    'sudo mkdir -p /opt/fil|sudo rsync -rlptD TOOLS/stage/fil/ /opt/fil/|exit@0' \
     "$(_SYNC=pas _di_steps)"
 _archive optfil-0.685-linux-x86_64.xz prebuilt
 expect 'a package that lists no portions installs all of it too' \
-    'sudo mkdir -p /opt/fil|sudo rsync -rlptD --delete TOOLS/stage/fil/ /opt/fil/|exit@0' \
+    'sudo mkdir -p /opt/fil|sudo rsync -rlptD TOOLS/stage/fil/ /opt/fil/|exit@0' \
     "$(_INSTALLED=1 _SYNC=pas _di_steps)"
 expect 'a package whose clang does not run here leaves /opt/fil alone' 'exit@1' \
     "$(_NO_CLANG=1 _di_steps)"
@@ -615,9 +623,189 @@ expect 'without a folder, a foreign arch is not fetched, with no root asked' 'no
     "$(_ARCHS=aarch64 _da_run)"
 expect 'with --install=<dir>, it is fetched and installed there' 'root install@aarch64@/x/fil' \
     "$(_ARCHS=aarch64 _DIR=/x/fil _da_run)"
+# Runs filc_download_all for --musl or --cosmo (<_LIBC>), with --install or not
+# (<_INST>), with the fetch and the install recorded instead of done.
+_da_libc_run() {
+    (
+        filc_fetch_asset() { echo "fetch@$1"; : > "$TOOLS/$1"; }
+        filc_upstream_install() { echo "install@${2##*/}@$INSTALL_DIR"; }
+        filc_download_install() { echo "glibc-install"; }
+        filc_optfil_root() { :; }
+        filc_upstream_version() { echo 0.686; }
+        TOOLS=$_sb/da-tools; mkdir -p "$TOOLS"
+        ARCHS=$(filc_host_arch) LIBC=$_LIBC INSTALL=$_INST INSTALL_DIR=/opt/fil-$_LIBC HEADLESS=1
+        filc_download_all 2>&1 | grep -oE '^(fetch@.*|install@.*|glibc-install)$|only installed' \
+            | tr '\n' ' ' | sed 's/ $//'
+    )
+}
+expect 'a published musl installer package is fetched and installed at its own folder' \
+    "fetch@optfil-musl-0.686-linux-$(filc_host_arch).xz install@optfil-musl-0.686-linux-$(filc_host_arch).xz@/opt/fil-musl" \
+    "$(_LIBC=musl _INST=1 _da_libc_run)"
+expect 'and a cosmo one by its optfil-cosmo name' \
+    "fetch@optfil-cosmo-0.686-linux-$(filc_host_arch).xz install@optfil-cosmo-0.686-linux-$(filc_host_arch).xz@/opt/fil-cosmo" \
+    "$(_LIBC=cosmo _INST=1 _da_libc_run)"
+expect 'a release with only the relocatable package gets it, and lays out its installer here' \
+    "fetch@filc-0.686-linux-$(filc_host_arch).xz pack@filc-0.686-linux-$(filc_host_arch).xz run@optfil-musl-0.686-linux-$(filc_host_arch)" \
+    "$( (filc_fetch_asset() { case "$1" in optfil-*) return 1 ;; esac; echo "fetch@$1"; : > "$TOOLS/$1"; }
+         filc_installer_pack() { echo "pack@${1##*/}"; }
+         filc_installer_run() { echo "run@${1##*/}"; }
+         filc_upstream_version() { echo 0.686; }
+         TOOLS=$_sb/da-tools; ARCH=$(filc_host_arch); LIBC=musl
+         filc_download_upstream_install) 2>&1 | grep -E '^(fetch|pack|run)@' | tr '\n' ' ' | sed 's/ $//')"
+expect 'without --install, a musl toolchain is not put into the tree' 'only installed' \
+    "$(_LIBC=musl _INST=0 _da_libc_run)"
 expect 'filc_optfil_root asks for no root for a writable folder' '' \
     "$( (sudo() { echo sudo; }; ARCHS=$(filc_host_arch); INSTALL_DIR=$_sb/inst-own; HEADLESS=
         filc_optfil_root; echo "$FILC_SUDO_KEEPALIVE") 2>&1 | tr -d '\n')"
+
+test_section 'filc_upstream_installer_package -- an installer for /opt/fil-<libc>'
+
+# A fake relocatable musl package of the current arch: one top folder whose setup.sh
+# marks the folder it ran in.
+_inst_sb=$_sb/installer; rm -rf "$_inst_sb"; mkdir -p "$_inst_sb/pkg/filc-0.686-linux-x" "$_inst_sb/dist"
+printf '#!/bin/sh\npwd > set-up-here\n' > "$_inst_sb/pkg/filc-0.686-linux-x/setup.sh"
+mkdir -p "$_inst_sb/pkg/filc-0.686-linux-x/build/bin"
+: > "$_inst_sb/pkg/filc-0.686-linux-x/build/bin/clang-20"
+: > "$_inst_sb/pkg/filc-0.686-linux-x/LLVM-LICENSE.txt"
+tar -C "$_inst_sb/pkg" -cJf "$_inst_sb/dist/filc-0.686-linux-x.xz" filc-0.686-linux-x
+: > "$_inst_sb/started"; sleep 1
+( DIST=$_inst_sb/dist TOOLS=$_inst_sb/tools ARCH=x PUBLISH=0
+  filc_upstream_version() { echo 0.686; }
+  filc_upstream_installer_package filc-0.686-linux-x.xz "$_inst_sb/started" ) > /dev/null
+expect 'it packs optfil-musl-<version>-linux-<arch>.xz' yes \
+    "$([ -f "$_inst_sb/dist/optfil-musl-0.686-linux-x.xz" ] && echo yes || echo no)"
+expect 'which holds fil.tar.xz, setup.sh and the licenses' \
+    'optfil-musl-0.686-linux-x/LLVM-LICENSE.txt optfil-musl-0.686-linux-x/fil.tar.xz optfil-musl-0.686-linux-x/setup.sh' \
+    "$(tar -tJf "$_inst_sb/dist/optfil-musl-0.686-linux-x.xz" | grep -v '/$' | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//')"
+tar -C "$_inst_sb" -xJf "$_inst_sb/dist/optfil-musl-0.686-linux-x.xz"
+mkdir -p "$_inst_sb/target"; : > "$_inst_sb/target/kept"
+( cd "$_inst_sb/optfil-musl-0.686-linux-x" && sh ./setup.sh --prefix="$_inst_sb/target" ) > /dev/null 2>&1
+expect 'its setup.sh extracts the toolchain at --prefix' yes \
+    "$([ -f "$_inst_sb/target/build/bin/clang-20" ] && echo yes || echo no)"
+expect 'and runs the toolchain'"'"'s own setup.sh there' "$_inst_sb/target" \
+    "$(cat "$_inst_sb/target/set-up-here" 2>/dev/null)"
+expect 'over the files the folder held' yes "$([ -f "$_inst_sb/target/kept" ] && echo yes || echo no)"
+expect 'it refuses /opt/fil, the glibc toolchain'"'"'s folder' 2 \
+    "$( (cd "$_inst_sb/optfil-musl-0.686-linux-x" && sh ./setup.sh --prefix=/opt/fil/ > /dev/null 2>&1); echo $?)"
+expect 'its release text says where it goes' \
+    'Linux x86_64, musl, installed at `/opt/fil-musl`
+Usage: `sudo ./setup.sh`; `--prefix=<dir>` picks another folder' \
+    "$(filc_asset_description optfil-musl-0.686-linux-x86_64.xz)"
+
+test_section 'filc_install_pick_dir -- the folder of a musl or cosmo toolchain'
+
+# Runs filc_install_pick_dir for <_LIBC> with the lines of <_ANSWER> typed in (unless
+# --headless, <_HEADLESS>; none at all with <_NO_INPUT>) and --install's folder <_DIR>;
+# prints the folder it picked, then how many times it asked.
+_pick() {
+    (
+        LIBC=$_LIBC INSTALL=1 INSTALL_DIR=${_DIR:-/opt/fil} HEADLESS=${_HEADLESS:-}
+        if [ -n "${_NO_INPUT:-}" ]; then
+            filc_install_pick_dir < /dev/null > "$_sb/pick.out"
+        else
+            filc_install_pick_dir <<< "${_ANSWER:-}" > "$_sb/pick.out"
+        fi
+        echo "$INSTALL_DIR $(grep -o 'Do you want to install at /opt/fil' "$_sb/pick.out" | wc -l)"
+    )
+}
+expect 'it asks whether to share /opt/fil, which "y" takes' '/opt/fil 1' \
+    "$(_LIBC=musl _ANSWER=y _pick)"
+expect 'an empty answer asks again' '/opt/fil 3' "$(_LIBC=musl _ANSWER=$'\n\nYes' _pick)"
+expect 'with no input left, it takes /opt/fil-musl' '/opt/fil-musl 1' \
+    "$(_LIBC=musl _NO_INPUT=1 _pick)"
+expect '"no", in any case and with whitespace, takes /opt/fil-musl' '/opt/fil-musl 1' \
+    "$(_LIBC=musl _ANSWER='  No ' _pick)"
+expect 'as does "n" for cosmo, with /opt/fil-cosmo' '/opt/fil-cosmo 1' \
+    "$(_LIBC=cosmo _ANSWER=N _pick)"
+expect '--headless asks nothing and takes /opt/fil-musl' '/opt/fil-musl 0' \
+    "$(_LIBC=musl _HEADLESS=1 _pick)"
+expect 'a folder --install=<dir> names is kept, with no question' '/x/m 0' \
+    "$(_LIBC=musl _DIR=/x/m _pick)"
+expect 'and glibc keeps /opt/fil, with no question' '/opt/fil 0' "$(_LIBC=glibc _pick)"
+
+test_section 'filc_upstream_install -- a musl or cosmo toolchain, through its installer'
+
+# Makes the musl installer package of <arch> in DIST, from a relocatable package laid
+# out as package-build.sh does: a clang printing "<text>", and a setup.sh that leaves
+# set-up in the folder it runs in.
+_musl_archive() {   # $1 = arch, $2 = text the clang prints
+    local name=filc-0.686-linux-$1
+    rm -rf "$_sb/mpack"; mkdir -p "$_sb/mpack/$name/build/bin" "$DIST"
+    printf '#!/bin/sh\necho "%s"\n' "$2" > "$_sb/mpack/$name/build/bin/clang"
+    chmod +x "$_sb/mpack/$name/build/bin/clang"
+    printf '#!/bin/sh\npwd > set-up\n' > "$_sb/mpack/$name/setup.sh"
+    tar -C "$_sb/mpack" -cJf "$_sb/mpack/$name.xz" "$name"
+    filc_installer_pack "$_sb/mpack/$name.xz" "$_sb/mpack/out"
+    tar -C "$_sb/mpack/out" -cJf "$DIST/optfil-musl-0.686-linux-$1.xz" "optfil-musl-0.686-linux-$1"
+    rm -rf "$_sb/mpack"
+}
+# Runs filc_upstream_install for <_ARCH> (foreign with <_CROSS>) into <_DIR>, with the
+# package packing recorded; prints its exit code.
+_ui_run() {
+    (
+        ARCH=$_ARCH CROSS=${_CROSS:-} INSTALL_DIR=$_DIR LIBC=musl TOOLS=$_sb/ui-tools
+        NO_SUDO=${_NO_SUDO:-} FILC_ROOT_STEPS=$_sb/ui-steps.sh
+        filc_upstream_package() { echo "pack@$ARCH"; _musl_archive "$ARCH" packed; }
+        filc_upstream_install "$_sb/ui-started"
+        echo "exit@$?"
+    ) 2>&1 | grep -E '^(pack@|exit@|Toolchain ready|.*does not run here|\(needs root|\(its installer)'
+}
+DIST=$_sb/ui-dist; rm -rf "$DIST" "$_sb/ui-inst"; mkdir -p "$_sb/ui-inst"
+: > "$_sb/ui-inst/old"
+: > "$_sb/ui-started"; sleep 1
+_musl_archive "$_host" fresh
+expect 'it installs through the installer this run made, which runs the toolchain'"'"'s setup.sh there' \
+    "Toolchain ready at $_sb/ui-inst: fresh|exit@0|$_sb/ui-inst" \
+    "$(_ARCH=$_host _DIR=$_sb/ui-inst _ui_run | tr '\n' '|')$(cat "$_sb/ui-inst/set-up")"
+expect 'and keeps the other files the folder held' yes "$([ -e "$_sb/ui-inst/old" ] && echo yes || echo no)"
+expect 'and leaves no stage' no "$([ -e "$_sb/ui-tools/install-$_host" ] && echo yes || echo no)"
+touch -d '2000-01-01' "$DIST/optfil-musl-0.686-linux-$_host.xz"
+expect 'with no package from this run, it packs one first' "pack@$_host|Toolchain ready at $_sb/ui-inst: packed|exit@0" \
+    "$(_ARCH=$_host _DIR=$_sb/ui-inst _ui_run | tr '\n' '|' | sed 's/|$//')"
+_musl_archive "$_other" foreign
+expect 'a foreign arch is installed with no run of its clang' "$_other toolchain installed at $_sb/ui-arm (its clang does not run here).|exit@0" \
+    "$(_ARCH=$_other _CROSS=$_other-linux-gnu _DIR=$_sb/ui-arm _ui_run | tr '\n' '|' | sed 's/|$//')"
+rm -f "$_sb/ui-steps.sh"
+_musl_archive "$_host" fresh
+expect 'under --no-sudo, a folder that needs root is not touched: the step is logged' \
+    "(needs root, hence skipped; logged in $_sb/ui-steps.sh: sudo sh $_sb/ui-tools/install-$_host/optfil-musl-0.686-linux-$_host/setup.sh --prefix=/opt/filc-spec-none --unattended)|(its installer stays in $_sb/ui-tools/install-$_host/optfil-musl-0.686-linux-$_host for that step)|exit@0" \
+    "$(_ARCH=$_host _DIR=/opt/filc-spec-none _NO_SUDO=1 _ui_run | tr '\n' '|' | sed 's/|$//')"
+expect 'the log runs it with sudo later' \
+    "sudo sh $_sb/ui-tools/install-$_host/optfil-musl-0.686-linux-$_host/setup.sh --prefix=/opt/filc-spec-none --unattended" \
+    "$(grep '^sudo ' "$_sb/ui-steps.sh")"
+expect 'and the installer it names is kept' yes \
+    "$([ -f "$_sb/ui-tools/install-$_host/optfil-musl-0.686-linux-$_host/setup.sh" ] && echo yes || echo no)"
+mkdir -p "$_sb/ui-share/stage/inst"
+( filc_install_run() { echo "$*"; }; filc_install_needs_root() { false; }
+  INSTALL_DIR=/opt/fil TOOLS=$_sb/ui-share CROSS=x ARCH=x
+  filc_installer_run "$_sb/ui-share/stage/inst" ) > /dev/null 2>&1
+expect 'into /opt/fil, the installer is told to share it' \
+    "sh $_sb/ui-share/stage/inst/setup.sh --prefix=/opt/fil --unattended --share-opt-fil" \
+    "$(cat "$_sb/ui-share/setup-x.log")"
+expect 'then the installer and its emptied stage are gone' no \
+    "$([ -e "$_sb/ui-share/stage" ] && echo yes || echo no)"
+
+test_section 'filc_install_run -- under --no-sudo, steps that need root are logged'
+
+_ir_log=$_sb/ir-steps.sh; rm -f "$_ir_log" "$_sb"/ir-steps-*.list
+( NO_SUDO=1 INSTALL_DIR=/opt/filc-spec-none FILC_ROOT_STEPS=$_ir_log
+  sudo() { echo ran; }
+  filc_install_run rsync -rlptD "a dir/" /opt/filc-spec-none/
+  printf 'lib/x\nlib/y\n' | filc_install_run rsync --files-from=- src/ /opt/filc-spec-none/ ) > "$_sb/ir.out"
+expect 'nothing runs, not even sudo' 0 "$(grep -c '^ran' "$_sb/ir.out")"
+expect 'the log is a script of the commands, quoted for the shell' \
+    "#!/bin/sh|sudo rsync -rlptD a\\ dir/ /opt/filc-spec-none/|sudo rsync --files-from=$_sb/ir-steps-1.list src/ /opt/filc-spec-none/" \
+    "$(grep -E '^(#!|sudo )' "$_ir_log" | tr '\n' '|' | sed 's/|$//')"
+expect 'the list --files-from=- read is saved beside it' 'lib/x lib/y' \
+    "$(tr '\n' ' ' < "$_sb/ir-steps-1.list" | sed 's/ $//')"
+expect 'the run reports the skipped steps' yes \
+    "$( (NO_SUDO=1 FILC_ROOT_STEPS=$_ir_log; filc_install_skipped) && echo yes || echo no)"
+expect 'and its end names the log to run' "sh $_ir_log" \
+    "$( (NO_SUDO=1 FILC_ROOT_STEPS=$_ir_log; filc_install_report_skipped) 2>&1 | grep -o "sh $_ir_log")"
+expect 'with sudo it runs the command as root' ran \
+    "$( (NO_SUDO='' INSTALL_DIR=/opt/filc-spec-none; sudo() { echo ran; }; filc_install_run true) )"
+
+unset DIST
 echo garbage > "$_srv/optfil-0.685-linux-x86_64.xz"
 expect 'a broken archive leaves /opt/fil alone' 'exit@1' "$(_di_steps)"
 rm -f "$_srv"/optfil-*.xz
@@ -735,6 +923,16 @@ expect 'and a tree that matches the build folder syncs nothing' '' \
     "$(_stale_sync_case > /dev/null
        ROOT=$_sb/stale-tree; BUILD_DIR=$_sb/stale-ws; BUILT=""; SYNCED=""
        filc_sync_all)"
+# A default build keeps the prebuilt libc++ and builds no cxx, yet a tree that
+# lacks its headers still gets them.
+expect 'libc++ headers the tree lacks are synced, though no cxx was built' new \
+    "$(ROOT=$_sb/inc-tree; BUILD_DIR=$_sb/inc-ws
+       rm -rf "$ROOT" "$BUILD_DIR"
+       mkdir -p "$ROOT/build" "$BUILD_DIR/build/include/c++/v1"
+       echo new > "$BUILD_DIR/build/include/c++/v1/cstddef"
+       BUILT=""; SYNCED=""
+       filc_sync_all > /dev/null
+       cat "$ROOT/build/include/c++/v1/cstddef" 2>/dev/null || echo none)"
 expect 'no temporary sync files are left behind' 0 \
     "$(find "$_sb/sync-tree" -name '*.filc-sync.*' -o -name '*.filc-old.*' | wc -l | tr -d ' ')"
 expect 'filc_portion lists the pizfix/ files a portion wrote' pizfix/lib/libpizlo.so \
@@ -1241,8 +1439,9 @@ _light_run() {
         filc_sync_all() { echo sync; }
         filc_upload_archive() { echo "publish@$1"; }
         filc_publish_git() { echo publish-git; }
-        filc_optfil_root() { echo root; [ -z "${_NOROOT:-}" ] || INSTALL=0; }
+        filc_optfil_root() { echo root; [ -z "${_NOROOT:-}" ] || NO_SUDO=1; }
         filc_download_install() { [ -z "${_NOPREBUILT:-}" ] || return 1; echo "install@opt-fil"; }
+        filc_download_upstream_install() { [ -z "${_NOPREBUILT:-}" ] || return 1; echo "install@$INSTALL_DIR"; }
         filc_download_toolchain() {
             [ -z "${_NOPREBUILT:-}" ] || return 1
             local d="${1:-$ROOT}"
@@ -1306,12 +1505,14 @@ expect '--no-build fails with no prebuilt toolchain' exit@1 "$(_NOPREBUILT=1 _li
 expect '--no-build with --install gets root and installs it at /opt/fil instead' 'root install@opt-fil' \
     "$(_light_run --no-build --install)"
 expect 'and skips a foreign arch there too' 'root install@opt-fil' "$(_light_run --no-build --install --archs=all)"
-expect 'with no root at hand (--headless) it fetches into the tree' "root fetch@prebuilt-$_host" \
+expect 'with no root at hand (--headless) it still installs, as --no-sudo' 'root install@opt-fil' \
     "$(_NOROOT=1 _light_run --no-build --install --headless)"
 expect '--no-build --install fails with no prebuilt toolchain' 'root exit@1' \
     "$(_NOPREBUILT=1 _light_run --no-build --install)"
-expect '--no-build --musl fails: no prebuilt musl toolchain is published' 'exit@1' \
-    "$(_light_run --no-build --install --musl)"
+expect '--no-build --install --musl installs the published musl package at its own folder' \
+    'root install@/opt/fil-musl' "$(_light_run --no-build --install --musl --headless)"
+expect 'and fails when none is published' 'root exit@1' \
+    "$(_NOPREBUILT=1 _light_run --no-build --install --musl --headless)"
 _light_reset
 expect '--no-build --no-download does nothing' '' "$(_light_run --no-build --no-download)"
 expect '--only does nothing, not even ask for root' '' "$(_light_run --only --install)"
@@ -1439,18 +1640,25 @@ _root_run() {   # $1 = what sudo does: ok or fail; then the flags
     (
         sudo() { [ "$how" = ok ]; }
         filc_parse_args "$@"; HOST_BUILD_DIR=$_sb/ws; ROOT=$_sb/tree
+        FILC_ROOT_STEPS=$_sb/root-steps.sh
         filc_optfil_root
         [ -z "${FILC_SUDO_KEEPALIVE:-}" ] || kill "$FILC_SUDO_KEEPALIVE" 2>/dev/null
-        echo "install=$INSTALL"
+        echo "install=$INSTALL no-sudo=$NO_SUDO"
     ) 2>&1
 }
-expect '--headless with no root warns, and leaves /opt/fil alone' \
-    "WARNING: No root password at hand (--headless), so /opt/fil is left alone:|install=0" \
+echo stale > "$_sb/root-steps.sh"
+expect '--headless with no root warns that the steps needing root are skipped and logged' \
+    "WARNING: No root (--headless, with no root password at hand):|install=1 no-sudo=1" \
     "$(_root_run fail --headless | grep -E '^WARNING|^install=' | tr '\n' '|' | sed 's/|$//')"
-expect 'it names where the toolchain stays instead' 1 \
-    "$(_root_run fail --headless | grep -c "stays in $_sb/ws (and this tree, $_sb/tree)")"
-expect '--headless with root installs' 'install=1' "$(_root_run ok --headless | tail -1)"
-expect 'without --headless it asks for the password, and installs' 'install=1' "$(_root_run ok | tail -1)"
+expect 'it names the log, which starts afresh' "1 0" \
+    "$(_root_run fail --headless | grep -c "logged in $_sb/root-steps.sh") $(wc -c < "$_sb/root-steps.sh")"
+expect '--no-sudo asks for no root even without --headless' \
+    "WARNING: No root (--no-sudo):|install=1 no-sudo=1" \
+    "$(_root_run ok --no-sudo | grep -E '^WARNING|^install=' | tr '\n' '|' | sed 's/|$//')"
+expect '--headless with root installs' 'install=1 no-sudo=' "$(_root_run ok --headless | tail -1)"
+expect 'without --headless it says why it asks for the password, and installs' \
+    'Root (sudo) is required for later steps: installing the toolchain at /opt/fil.|(pass --no-sudo or --headless to skip those steps and log their commands)|install=1 no-sudo=' \
+    "$(_root_run ok | tr '\n' '|' | sed 's/|$//')"
 _root_run_status() { ( sudo() { false; }; filc_parse_args; filc_optfil_root ) > /dev/null 2>&1; }
 expect_returns 'a refused password stops the run' 1 _root_run_status
 
@@ -1509,11 +1717,11 @@ _opt_steps() {
         | tr '\n' '|' | sed 's/|$//'
 }
 expect 'it builds both glibcs as portions, lays out, packs with no root, then installs as root' \
-    "built@yolo|built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "built@yolo|built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_opt_run | _opt_steps)"
 expect 'the package lands in dist/ under the upstream name' "optfil-0.685-linux-$_host.xz" "$(ls "$DIST")"
 expect 'a portion whose sources did not change is kept' \
-    "layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_opt_run | _opt_steps)"
 expect 'its manifest lists its whole output folder' \
     'optfil-yolo-glibc-build/layout/lib/crt1.o optfil-yolo-glibc-build/layout/lib/ld-fil1-x.so' \
@@ -1529,22 +1737,22 @@ expect 'and drops its build folder first' 'gone' \
 expect 'it publishes only with --publish' "0 publish@optfil-0.685-linux-$_host.xz" \
     "$(_opt_run | grep -c '^publish@') $(_PUB=1 _opt_run | grep '^publish@')"
 expect '--no-xz installs without packing' \
-    "layout|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "layout|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_NOXZ=1 _opt_run | _opt_steps)"
 sleep 1; echo src3 > "$_optroot/projects/yolo-glibc-2.44/x.c"
 expect '--sync=yolo puts the yolo files into /opt/fil right after they build, from the whole layout' \
-    "built@yolo|layout|sudo rsync -rlptD --files-from=- $_opt/optfil-root/opt/fil/ /opt/fil/|  lib/crt1.o|  lib/ld-fil1-x.so|synced: optfil-yolo (into /opt/fil)|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "built@yolo|layout|sudo rsync -rlptD --files-from=- $_opt/optfil-root/opt/fil/ /opt/fil/|  lib/crt1.o|  lib/ld-fil1-x.so|synced: optfil-yolo (into /opt/fil)|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_SYNC=yolo _opt_run | _opt_steps)"
 sleep 1; echo src4 > "$_optroot/projects/yolo-glibc-2.44/x.c"
 expect 'by default a filter that does not match it keeps it at its last build' \
-    "layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_SYNC='^yolo$' _opt_run | _opt_steps)"
 expect 'with --sync-stale it builds, and leaves /opt/fil until the entire build is done' \
-    "built@yolo|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "built@yolo|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_STALE=1 _SYNC='^yolo$' _opt_run | _opt_steps)"
 sleep 1; echo src5 > "$_optroot/projects/yolo-glibc-2.44/x.c"
 expect 'nor does --no-install, which only packs' "built@yolo|layout|build_package@$_opt/optfil-root" \
-    "$(_INST=0 _SYNC=yolo _opt_run | sed 's/^sudo rsync -rlptD --delete.*//' | _opt_steps)"
+    "$(_INST=0 _SYNC=yolo _opt_run | sed 's/^sudo rsync -rlptD [^-].*//' | _opt_steps)"
 sleep 1; echo src6 > "$_optroot/projects/user-glibc-2.44/x.c"
 expect 'under --sync, after the build only what this run built goes to /opt/fil' \
     "built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --files-from=$_opt/optfil-root/opt/fil/share/fil-c-light/portions/optfil-libc.list $_opt/optfil-root/opt/fil/ /opt/fil/|synced: optfil-libc (into /opt/fil)" \
@@ -1554,7 +1762,7 @@ expect 'under --sync, a clang taken from the prebuilt toolchain goes there too' 
     "$(_LAYLISTS=1 _INSTALLED=1 _SYNC=pas _PRE=clang _opt_run | _opt_steps)"
 sleep 1; echo src7 > "$_optroot/projects/user-glibc-2.44/x.c"
 expect 'with no toolchain at /opt/fil yet, all of it goes there' \
-    "built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD --delete $_opt/optfil-root/opt/fil/ /opt/fil/" \
+    "built@libc|layout|build_package@$_opt/optfil-root|sudo rsync -rlptD $_opt/optfil-root/opt/fil/ /opt/fil/" \
     "$(_LAYLISTS=1 _SYNC=pas _STALE=1 _opt_run | _opt_steps)"
 rm -rf "$_opt/optfil-user-glibc-build"
 expect 'before the other /opt/fil portion ever built, it waits for the entire build too' \
@@ -1746,6 +1954,7 @@ _xsteps() {
         filc_optfil_install() { echo "optfil@$ARCH"; }
         filc_optfil_package() { echo "optfilpkg@$ARCH"; }
         filc_upstream_package() { echo "muslpkg@$ARCH"; }
+        filc_upstream_install() { echo "muslinstall@$ARCH"; }
         filc_sync_all() { echo "sync@$ARCH"; }
         filc_upload_archive() { echo "publish@$1"; }
         filc_clean_all() { echo "clean@$(basename "$BUILD_DIR")"; }
@@ -1780,6 +1989,9 @@ expect '--no-install packs this arch for /opt/fil too, with no root' \
 expect '--musl asks for no root, installs nothing, and packs each arch upstream'"'"'s musl way' \
     "clang@$_host runtime@$_host sync@$_host muslpkg@$_host cross@$_other helper@$_other clang@$_other runtime@$_other muslpkg@$_other" \
     "$(_xsteps --musl --nightly --archs=all)"
+expect '--musl --install=<dir> also installs each arch there, after packing it' \
+    "root@sudo clang@$_host runtime@$_host sync@$_host muslpkg@$_host muslinstall@$_host cross@$_other helper@$_other clang@$_other runtime@$_other muslpkg@$_other muslinstall@$_other" \
+    "$(_xsteps --musl --nightly --archs=all --install="$_sb/xs-musl")"
 rm -rf "$_sb/xs-dist"; mkdir -p "$_sb/xs-dist"
 for _f in "optfil-0.685-linux-$_host" "filc-0.685-linux-$_host" "optfil-0.685-linux-$_other" \
           "filc-linux-universal-$_host"; do printf x | xz > "$_sb/xs-dist/$_f.xz"; done
