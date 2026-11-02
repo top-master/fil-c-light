@@ -93,6 +93,18 @@ expect '--only --publish publishes dist/' 'upload 1' "$MODE $PUBLISH"
 _parse --only --build --install
 expect '--only --build builds, and installs only when asked' 'light 0 1 0' \
     "$MODE $DOWNLOAD $INSTALL $SYNC"
+_parse --only --ld
+expect '--only --ld builds only GNU ld' 'ld 1 0 0 0' "$MODE $BUILD_LD $DOWNLOAD $INSTALL $SYNC"
+_parse --ld
+expect '--ld with a build builds ld as well' 'light 1' "$MODE $BUILD_LD"
+_parse --ld --no-ld
+expect '--no-ld never builds ld' 'light 0' "$MODE $BUILD_LD"
+_parse
+expect 'by default ld is built only when no previous package holds one' '' "$BUILD_LD"
+_parse --only
+expect '--only counts as --no-ld' '0' "$BUILD_LD"
+_parse --ld --only
+expect 'unless --ld is given too, wherever it stands' 'ld 1' "$MODE $BUILD_LD"
 expect '--help names no internal helper' 0 \
     "$(bash "$_root/build.sh" --help | grep -c -- '--publish-git\|--no-download\|--download')"
 expect '--help --internal also lists them' '1 1 1' \
@@ -1662,6 +1674,112 @@ expect 'without --headless it says why it asks for the password, and installs' \
 _root_run_status() { ( sudo() { false; }; filc_parse_args; filc_optfil_root ) > /dev/null 2>&1; }
 expect_returns 'a refused password stops the run' 1 _root_run_status
 
+test_section 'optfil-ld -- GNU ld for the /opt/fil toolchain'
+
+# A fake optfil package of arch "x" in <dir>/dist, whose fil.tar.xz holds bin/ld
+# and bin/ld.bfd as one file and a hard link (unless <_NO_LD>), with binutils'
+# license beside the package's other licenses.
+_ld_package() {   # $1 = dir
+    local name=optfil-0.686-linux-x
+    rm -rf "$1/pk"; mkdir -p "$1/pk/fil/bin" "$1/pk/$name/additional_licenses" "$1/dist"
+    if [ -z "${_NO_LD:-}" ]; then
+        echo 'fake ld' > "$1/pk/fil/bin/ld.bfd"
+        ln "$1/pk/fil/bin/ld.bfd" "$1/pk/fil/bin/ld"
+    fi
+    : > "$1/pk/fil/bin/filcc"
+    (cd "$1/pk" && tar -cJf "$name/fil.tar.xz" fil)
+    echo GPL3 > "$1/pk/$name/additional_licenses/binutils-LICENSE.txt"
+    (cd "$1/pk" && tar -cJf "$1/dist/$name.xz" "$name")
+    rm -rf "$1/pk"
+}
+# Runs filc_optfil_ld_reuse in <dir> for arch "x", with the published package
+# missing; prints its messages.
+_ld_reuse() {   # $1 = dir
+    ( ARCH=x BUILD_DIR="$1/ws" DIST="$1/dist" TOOLS="$1/tools"
+      filc_upstream_version() { echo 0.686; }
+      filc_fetch_asset() { return 1; }
+      mkdir -p "$BUILD_DIR"
+      filc_optfil_ld_reuse; echo "exit@$?" ) 2>&1 | grep -E '^(=====|\(|exit@)' | tr '\n' '|' | sed 's/|$//'
+}
+_ld=$_sb/ld; rm -rf "$_ld"; mkdir -p "$_ld"
+_ld_package "$_ld"
+expect 'outside --nightly, ld comes from the previous package' \
+    '===== optfil-ld: took ld from optfil-0.686-linux-x.xz =====|exit@0' "$(_ld_reuse "$_ld")"
+expect 'as ld.bfd and ld, one file with two names' 'fake ld 2' \
+    "$(cat "$_ld/ws/optfil-ld/root/bin/ld") $(stat -c %h "$_ld/ws/optfil-ld/root/bin/ld.bfd")"
+expect 'with binutils'"'"' license' GPL3 "$(cat "$_ld/ws/optfil-ld/binutils-LICENSE.txt")"
+expect 'an ld the build folder has stays' '===== optfil-ld: kept the ld of an earlier build =====|exit@0' \
+    "$(_ld_reuse "$_ld")"
+rm -rf "$_ld/ws"
+_NO_LD=1 _ld_package "$_ld"
+expect 'a package without ld fails, and takes nothing' \
+    '(optfil-0.686-linux-x.xz holds no ld)|exit@1|no' \
+    "$(_ld_reuse "$_ld")|$([ -e "$_ld/ws/optfil-ld" ] && echo yes || echo no)"
+rm -rf "$_ld/dist"
+expect 'as does no package at all' \
+    '(no previous optfil-0.686-linux-x.xz to take ld from)|exit@1' "$(_ld_reuse "$_ld")"
+
+# Runs filc_build_optfil_ld against a fake binutils source in <dir>, with make
+# and strip recorded; a foreign arch with <_CROSS>.
+_ld_build() {   # $1 = dir
+    ( BUILD_DIR="$1/ws" TOOLS="$1/tools" CROSS="${_CROSS:-}" BINUTILS_VERSION=9.9
+      src="$TOOLS/binutils-9.9" _calls="$1/calls"
+      mkdir -p "$src/ld" "$BUILD_DIR"
+      : > "$src/ld/ldmain.c"; echo GPL3 > "$src/COPYING3"
+      printf '#!/bin/sh\necho "configure CC=$CC $*" >> "%s"\n' "$_calls" > "$src/configure"
+      chmod +x "$src/configure"
+      filc_ncpu() { echo 2; }
+      make() {
+          echo "make $*" >> "$_calls"
+          case "$*" in
+              "-C ld -j2 all LDFLAGS=-all-static") mkdir -p ld; echo 'built ld' > ld/ld-new ;;
+          esac
+      }
+      strip() { :; }
+      : > "$_calls"
+      filc_build_optfil_ld )
+}
+_ld_build "$_ld"
+expect 'it configures a static build of ld alone, with the host'"'"'s GCC' \
+    'configure CC=gcc -static --prefix=/opt/fil --disable-gold' \
+    "$(grep '^configure' "$_ld/calls" | cut -d' ' -f1-5)"
+expect 'and links ld with -all-static, after the libraries ld links' \
+    'make -C libctf -j2|make -C ld -j2 all LDFLAGS=-all-static' \
+    "$(grep -E '^make -C (libctf|ld) ' "$_ld/calls" | tr '\n' '|' | sed 's/|$//')"
+expect 'then puts it in optfil-ld/root/bin as ld.bfd and ld, with the license, and drops the build' \
+    'built ld 2 GPL3 no' \
+    "$(cat "$_ld/ws/optfil-ld/root/bin/ld") $(stat -c %h "$_ld/ws/optfil-ld/root/bin/ld") $(cat "$_ld/ws/optfil-ld/binutils-LICENSE.txt") $([ -e "$_ld/ws/optfil-ld-build" ] && echo yes || echo no)"
+_CROSS=aarch64-linux-gnu _ld_build "$_ld"
+expect 'a foreign arch is configured for that arch' \
+    "--build=$(gcc -dumpmachine) --host=aarch64-linux-gnu --target=aarch64-linux-gnu" \
+    "$(grep '^configure' "$_ld/calls" | grep -oE -- '--build=[^ ]+ --host=[^ ]+ --target=[^ ]+')"
+
+# Runs filc_optfil_build with each portion recorded: <_MODE> and <_BUILD_LD>; the
+# reuse of ld fails with <_NO_REUSE>.
+_ld_which() {
+    ( MODE=$_MODE BUILD_LD=${_BUILD_LD:-}
+      filc_runtime_env() { :; }
+      filc_portion() { echo "portion@$1"; }
+      filc_optfil_ld_reuse() { echo reuse; [ -z "${_NO_REUSE:-}" ]; }
+      filc_optfil_layout() { echo layout; }
+      filc_optfil_build ) 2>&1 | grep -v '^$' | tr '\n' ' ' | sed 's/ $//'
+}
+expect 'the default build reuses ld' 'portion@optfil-yolo portion@optfil-libc reuse layout' \
+    "$(_MODE=light _ld_which)"
+expect '--nightly builds it' 'portion@optfil-yolo portion@optfil-libc portion@optfil-ld layout' \
+    "$(_MODE=source _ld_which)"
+expect 'and so does --ld' 'portion@optfil-yolo portion@optfil-libc portion@optfil-ld layout' \
+    "$(_MODE=light _BUILD_LD=1 _ld_which)"
+expect 'with nothing to reuse, the default build builds it' \
+    'portion@optfil-yolo portion@optfil-libc reuse ===== optfil-ld: no previous package holds ld; building it ===== portion@optfil-ld layout' \
+    "$(_MODE=light _NO_REUSE=1 _ld_which)"
+expect 'but --no-ld does not, and warns' \
+    'portion@optfil-yolo portion@optfil-libc reuse WARNING: No previous package holds ld, and --no-ld builds none; the package ships no ld. layout' \
+    "$(_MODE=light _BUILD_LD=0 _NO_REUSE=1 _ld_which | tr -s ' ')"
+expect '--clean=optfil-ld removes its build output' 'no no' \
+    "$( (BUILD_DIR=$_ld/ws; mkdir -p "$BUILD_DIR/optfil-ld-build"; filc_clean_portion optfil-ld > /dev/null
+         echo "$([ -e "$BUILD_DIR/optfil-ld" ] && echo yes || echo no) $([ -e "$BUILD_DIR/optfil-ld-build" ] && echo yes || echo no)") )"
+
 test_section 'filc_optfil_install / filc_optfil_package -- /opt/fil, as portions'
 
 # _opt_run: filc_optfil_install in a build folder whose two /opt/fil glibc builds are
@@ -1681,6 +1799,7 @@ printf '#!/bin/sh\necho "build_package@$OPTFIL_DESTDIR"; printf x | xz > optfil-
 chmod +x "$_opt/optfil/"*.sh
 _opt_run() {
     ( sudo() { echo "sudo $*"; case " $* " in *" --files-from=- "*) sed 's/^/  /' ;; esac; }
+      filc_optfil_ld_reuse() { :; }
       filc_upload_archive() { echo "publish@$1"; }
       filc_runtime_env() { :; }
       filc_build_optfil_yolo() {

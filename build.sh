@@ -64,8 +64,9 @@
 #                              runtime, libpizlo), libc (user glibc), cxx (libc++ and
 #                              libc++abi, with their headers in build/include), crypt
 #                              (libxcrypt, from the 3rd-party/crypt submodule), and for
-#                              the /opt/fil toolchain (see --install) optfil-yolo and
+#                              the /opt/fil toolchain (see --install) optfil-yolo,
 #                              optfil-libc (the two glibcs built again for /opt/fil),
+#                              and optfil-ld (GNU ld, see --ld),
 #                              whose early update goes to /opt/fil. --sync=yolo matches
 #                              yolo and optfil-yolo. E.g. --sync='clang|pas'. A portion
 #                              whose sources changed since it last built is built only
@@ -198,6 +199,14 @@
 #
 #   ./build.sh --headless      Never ask anything: without a root password at hand, --install
 #                              works as --no-sudo.
+#   ./build.sh --ld            Build GNU ld for the /opt/fil toolchain (bin/ld), as
+#                              --nightly does. Without --ld, a build takes it from the
+#                              previous optfil package of the arch (dist/, else the
+#                              published one), and builds it when neither holds one.
+#                              --no-ld never builds it (then a package may ship no ld);
+#                              --only counts as --no-ld, unless --ld is given too.
+#                              `./build.sh --only --ld` builds only ld, as the
+#                              optfil-ld portion, in each arch's build folder.
 #   ./build.sh --no-sudo       Never ask for root: --install skips each step that needs it,
 #                              and logs its command in .filc-light-tools/root-steps.sh, a
 #                              script that does those steps with sudo (the run names it at
@@ -232,6 +241,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS="$ROOT/.filc-light-tools"
 DIST="$ROOT/dist"
+# The GNU binutils release whose `ld` the /opt/fil toolchain ships (see
+# filc_build_optfil_ld).
+BINUTILS_VERSION=2.47
 # The --install steps (see 3rd-party/automation/bh-install.sh).
 . "$ROOT/3rd-party/automation/bh-install.sh"
 HOST_CLANG="${HOST_CLANG:-clang}"
@@ -815,7 +827,7 @@ filc_mirror() {
 }
 
 # ---------- cleaning portions (--clean, and --rebuild through it) ----------
-FILC_PORTIONS="clang crt unwind osinc yolo pas libc cxx crypt optfil-yolo optfil-libc"
+FILC_PORTIONS="clang crt unwind osinc yolo pas libc cxx crypt optfil-yolo optfil-libc optfil-ld"
 
 # A portion's keyword is cleaned when it matches FILC_CLEAN_FILTER (an extended regexp
 # over the keywords, not over paths); an empty filter matches none.
@@ -838,6 +850,7 @@ filc_clean_portion() {   # $1 = portion keyword
     crypt)  rm -rf "${BUILD_DIR:?}/crypt-build" ;;
     optfil-yolo) rm -rf "${BUILD_DIR:?}/optfil-yolo-glibc-build" ;;
     optfil-libc) rm -rf "${BUILD_DIR:?}/optfil-user-glibc-build" ;;
+    optfil-ld) rm -rf "${BUILD_DIR:?}/optfil-ld-build" "${BUILD_DIR:?}/optfil-ld" ;;
     *)      return 0 ;;
   esac
   echo "clean: removed the $1 build output."
@@ -948,6 +961,7 @@ filc_portion_sources() {   # $1 = portion keyword
     crypt)  echo "3rd-party/crypt" ;;
     optfil-yolo) echo "projects/yolo-glibc-2.44 projects/binary-root.c optfil/kernel-include-$ARCH" ;;
     optfil-libc) echo "projects/user-glibc-2.44 projects/binary-root.c filc/include" ;;
+    optfil-ld) echo ".filc-light-tools/binutils-$BINUTILS_VERSION.tar.xz" ;;
   esac
 }
 
@@ -2102,6 +2116,17 @@ filc_optfil_build() {
   filc_runtime_env
   filc_portion optfil-yolo filc_build_optfil_yolo
   filc_portion optfil-libc filc_build_optfil_libc
+  if [ "${MODE:-light}" = source ] || [ "${BUILD_LD:-}" = 1 ]; then
+    filc_portion optfil-ld filc_build_optfil_ld
+  elif ! filc_optfil_ld_reuse; then
+    if [ "${BUILD_LD:-}" = 0 ]; then
+      filc_warning "No previous package holds ld, and --no-ld builds none;" \
+        "the package ships no ld."
+    else
+      echo "===== optfil-ld: no previous package holds ld; building it ====="
+      filc_portion optfil-ld filc_build_optfil_ld
+    fi
+  fi
   filc_optfil_layout
 }
 
@@ -2153,6 +2178,109 @@ filc_build_optfil_libc() {
     echo "rootsbindir=/opt/fil/sbin" > "$dir/configparms"
   fi
   filc_optfil_make "$dir" "$BUILD_DIR/$dir/install-root"
+}
+
+# Fetches the binutils release (BINUTILS_VERSION) into TOOLS, once, and unpacks it there.
+filc_binutils_source() {
+  local tarball="$TOOLS/binutils-$BINUTILS_VERSION.tar.xz" src="$TOOLS/binutils-$BINUTILS_VERSION"
+  if [ -f "$src/ld/ldmain.c" ]; then
+    return 0
+  fi
+  mkdir -p "$TOOLS"
+  if [ ! -s "$tarball" ] \
+      && ! curl -fL --retry 2 -o "$tarball" \
+           "https://ftp.gnu.org/gnu/binutils/binutils-$BINUTILS_VERSION.tar.xz"
+  then
+    rm -f "$tarball"
+    echo "ERROR: cannot fetch binutils $BINUTILS_VERSION." >&2
+    exit 1
+  fi
+  rm -rf "$src"
+  tar -C "$TOOLS" -xJf "$tarball" || { rm -rf "$src"; exit 1; }
+}
+
+# The optfil-ld portion: GNU ld from binutils, as a static program (it needs nothing
+# from the toolchain, and runs on any Linux of its arch), built with the host's GCC
+# (the cross GCC for a foreign arch, through filc_cross_env's shims) into
+# optfil-ld/root/bin as ld.bfd and ld. The clang uses the ld beside it in bin/
+# before the one on PATH. Only `ld` and the libraries it links are built: libtool
+# drops a plain -static from CC when it links; hence the link takes -all-static.
+filc_build_optfil_ld() {
+  local src="$TOOLS/binutils-$BINUTILS_VERSION" dir="$BUILD_DIR/optfil-ld-build"
+  local out="$BUILD_DIR/optfil-ld" jobs d
+  local -a host=()
+  filc_binutils_source
+  if [ -n "$CROSS" ]; then
+    # The host GCC names the build machine; uname is the arch's shim by now.
+    host=(--build="$("${BUILD_CC:-gcc}" -dumpmachine)" --host="$CROSS" --target="$CROSS")
+  fi
+  jobs="$(filc_ncpu 2>/dev/null || true)"
+  [ -n "$jobs" ] || jobs=1
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  ( cd "$dir"
+    # The tools binutils runs while it builds (bfd's doc/chew) need the host's GCC,
+    # which filc_cross_env keeps in BUILD_CC once gcc is the cross GCC, with the
+    # host's assembler and linker (-B), as PATH names the arch's first.
+    CC="gcc -static" CC_FOR_BUILD="${BUILD_CC:-gcc} -B/usr/bin/" AR=ar RANLIB=ranlib \
+      "$src/configure" "${host[@]}" --prefix=/opt/fil \
+      --disable-gold --disable-gprofng --disable-gprof --disable-nls --disable-werror \
+      --disable-shared --enable-static --disable-plugins --disable-gdb --disable-gdbserver \
+      --disable-sim --disable-libdecnumber --disable-readline --without-zstd || exit 1
+    make configure-libiberty configure-zlib configure-libsframe configure-bfd \
+      configure-opcodes configure-libctf configure-ld || exit 1
+    for d in libiberty zlib libsframe bfd opcodes libctf; do
+      make -C "$d" -j"$jobs" || exit 1
+    done
+    make -C ld -j"$jobs" all LDFLAGS=-all-static || exit 1 ) || exit 1
+  rm -rf "$out"
+  mkdir -p "$out/root/bin"
+  cp "$dir/ld/ld-new" "$out/root/bin/ld.bfd"
+  strip "$out/root/bin/ld.bfd"
+  ln "$out/root/bin/ld.bfd" "$out/root/bin/ld"
+  cp "$src/COPYING3" "$out/binutils-LICENSE.txt"
+  rm -rf "$dir"
+}
+
+# Outside --nightly and --ld, ld comes from the previous package of this arch
+# (dist/optfil-<version>-linux-<arch>.xz), else from the published one, with its
+# license, into optfil-ld (see filc_build_optfil_ld). An ld the build folder already
+# has stays. Fails when none of them holds an ld.
+filc_optfil_ld_reuse() {
+  local out="$BUILD_DIR/optfil-ld" name pkg stage fetched=""
+  if [ -e "$out/root/bin/ld.bfd" ]; then
+    echo "===== optfil-ld: kept the ld of an earlier build ====="
+    return 0
+  fi
+  name="optfil-$(filc_upstream_version)-linux-$ARCH"
+  pkg="$DIST/$name.xz"
+  if [ ! -f "$pkg" ]; then
+    if ! filc_fetch_asset "$name.xz" > /dev/null; then
+      echo "(no previous $name.xz to take ld from)"
+      return 1
+    fi
+    pkg="$TOOLS/$name.xz"
+    fetched=1
+  fi
+  stage="$BUILD_DIR/optfil-ld.new"
+  rm -rf "$stage"
+  mkdir -p "$stage/root"
+  # Both names at once: the package keeps them as one file and a hard link to it.
+  if tar -xJOf "$pkg" "$name/fil.tar.xz" 2>/dev/null \
+       | tar -C "$stage/root" -xJ --strip-components=1 fil/bin/ld fil/bin/ld.bfd 2>/dev/null \
+     && tar -C "$stage" -xJf "$pkg" --strip-components=2 \
+          "$name/additional_licenses/binutils-LICENSE.txt" 2>/dev/null
+  then
+    rm -rf "$out"
+    mv "$stage" "$out"
+    echo "===== optfil-ld: took ld from ${pkg##*/} ====="
+  else
+    rm -rf "$stage"
+    echo "(${pkg##*/} holds no ld)"
+    [ -z "$fetched" ] || rm -f "$pkg"
+    return 1
+  fi
+  [ -z "$fetched" ] || rm -f "$pkg"
 }
 
 # Tells whether the glibc build folder <dir> of the /opt/fil portion <keyword> must be
@@ -2210,6 +2338,7 @@ filc_optfil_portion_dir() {   # $1 = portion keyword
   case "$1" in
     optfil-yolo) echo optfil-yolo-glibc-build/layout ;;
     optfil-libc) echo optfil-user-glibc-build/install-root/opt/fil ;;
+    optfil-ld) echo optfil-ld/root ;;
   esac
 }
 
@@ -2249,6 +2378,14 @@ filc_optfil_layout() {
     ln -s filcc-clang-20 bin/fil++
     ln -s filcc-clang-20 bin/filcpp
     cp -a "$BUILD_DIR/$(filc_optfil_portion_dir optfil-libc)/." .
+    # GNU ld, when the build has it (see filc_build_optfil_ld), with its license
+    # among the package's (build_finish.sh takes optfil/*-LICENSE.txt).
+    if [ -e "$BUILD_DIR/$(filc_optfil_portion_dir optfil-ld)/bin/ld.bfd" ]; then
+      cp -a "$BUILD_DIR/$(filc_optfil_portion_dir optfil-ld)/." .
+      cp "$BUILD_DIR/optfil-ld/binutils-LICENSE.txt" "$BUILD_DIR/optfil/binutils-LICENSE.txt"
+    else
+      rm -f "$BUILD_DIR/optfil/binutils-LICENSE.txt"
+    fi
     # libxcrypt, when the toolchain has it, with /opt/fil in its pkg-config and
     # libtool files.
     if [ -e "$BUILD_DIR/pizfix/lib/libcrypt.so.2" ]; then
@@ -2297,7 +2434,7 @@ filc_optfil_portion_lists() {   # $1 = /opt/fil tree
   local out="$1/share/fil-c-light/portions" kw f
   rm -rf "$out"
   mkdir -p "$out"
-  for kw in optfil-yolo optfil-libc clang crt unwind pas cxx crypt; do
+  for kw in optfil-yolo optfil-libc optfil-ld clang crt unwind pas cxx crypt; do
     ( cd "$1"
       case "$kw" in
         optfil-yolo)
@@ -2308,6 +2445,7 @@ filc_optfil_portion_lists() {   # $1 = /opt/fil tree
         optfil-libc)
           ( cd "$BUILD_DIR/$(filc_optfil_portion_dir optfil-libc)" && find . \( -type f -o -type l \) ) \
             | sed 's#^\./##' ;;
+        optfil-ld) printf '%s\n' bin/ld bin/ld.bfd ;;
         clang)
           printf '%s\n' bin/filcc-clang-20 bin/filcc bin/fil++ bin/filcpp
           find lib/clang \( -type f -o -type l \) ;;
@@ -2472,7 +2610,7 @@ filc_usage() {
        "[--no-publish|--no-upload] [--publish|--upload] [--no-build|--no-rebuild]" \
        "[--export] [--prerequisites] [--archs=<list>|--arch=<list>]" \
        "[--glibc|--gnu|--musl|--cosmo] [--install|--setup|--no-install|--no-setup] [--headless]" \
-       "[--no-sudo|--sudo]" >&2
+       "[--no-sudo|--sudo] [--ld|--no-ld]" >&2
   exit 2
 }
 
@@ -2509,6 +2647,8 @@ filc_parse_args() {
   INSTALL_DIR=/opt/fil
   HEADLESS=""        # never ask anything
   NO_SUDO=""         # skip (and log) the steps that need root, rather than ask for it
+  BUILD_LD=""        # GNU ld (see filc_build_optfil_ld): 1 builds it, 0 never does, empty
+                     # builds it when no previous package holds one
   local asked_publish="" asked_build="" nobuild="" asked_help="" internal="" asked_install="" arg
   # --only disables all default operations.
   for arg in "$@"; do
@@ -2517,6 +2657,7 @@ filc_parse_args() {
       DOWNLOAD=0
       INSTALL=0
       SYNC=0
+      BUILD_LD=0
     fi
   done
   while [ $# -gt 0 ]; do
@@ -2570,6 +2711,8 @@ filc_parse_args() {
       --no-install|--no-setup) INSTALL=0 ;;
       --headless)           HEADLESS=1 ;;
       --no-sudo)            NO_SUDO=1 ;;
+      --ld)                 BUILD_LD=1 ;;
+      --no-ld)              BUILD_LD=0 ;;
       --sudo)               NO_SUDO="" ;;
       -h|--help)            asked_help=1 ;;
       --internal)           internal=1 ;;
@@ -2589,7 +2732,9 @@ filc_parse_args() {
   # --clean, else only fetching. --clean alone only cleans; with a build flag or
   # --publish it cleans, then builds (an export never builds).
   if [ -n "$nobuild" ] && [ "$MODE" != export ] && [ "$MODE" != prerequisites ]; then
-    if [ -n "$asked_publish" ]; then
+    if [ "$BUILD_LD" = 1 ] && [ -z "$asked_publish" ]; then
+      MODE=ld
+    elif [ -n "$asked_publish" ]; then
       MODE=upload
     elif [ -n "$FILC_CLEAN_FILTER" ]; then
       MODE=clean
@@ -2767,6 +2912,19 @@ filc_main() {
           filc_github_end
         fi
       fi
+      ;;
+    ld)
+      # Only GNU ld of each arch (see filc_build_optfil_ld), as the optfil-ld portion.
+      for arch in $ARCHS; do
+        filc_use_arch "$arch"
+        mkdir -p "$BUILD_DIR"
+        if [ -n "$CROSS" ]; then
+          filc_install_cross "$ARCH"
+          filc_cross_tools
+        fi
+        filc_portion optfil-ld filc_build_optfil_ld
+        echo "ld: $BUILD_DIR/$(filc_optfil_portion_dir optfil-ld)/bin/ld"
+      done
       ;;
     download)
       # Fetches nothing while fetching is off (see filc_download_all).
